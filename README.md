@@ -17,9 +17,9 @@
 
 ## 软件架构
 
-我们基于ROS 2实现了大部分的机器人应用, 如[架构图](tools/docs/soft_arch.svg)所示, 包括多设备链接、多模态感知、多模态人机交互、自主决策、空间定位、导航和目标追踪等功能. 目前使用的DDS中间件是`Cyclone DDS`, ROS 2的版本为`Galactic`. 
+我们基于ROS 2实现了大部分的机器人应用, 如[架构图](tools/docs/soft_arch.svg)所示, 包括多设备链接、多模态感知、多模态人机交互、自主决策、空间定位、导航和目标追踪等功能. 目前使用的DDS中间件是`Cyclone DDS`, ROS 2的版本为`Humble`. 
 
-由于NVIDIA对Jetson系列截至目前(202109)只提供了Ubuntu 18.04的支持, 故我们对Ubuntu 18.04进行了ROS 2的适配和修改. 具体的修改内容可以通过[mini.repos](tools/ros2_fork/mini.repos)进行拉取, 我们去除了部分没必要的仓, 并添加了一些需要使用的仓库. 
+本项目已适配 **Ubuntu 22.04 (Jammy)** 和 **NVIDIA JetPack 6.x** (L4T r36.4, CUDA 12.6). 具体的ROS 2源码构建内容可以通过[mini.repos](tools/ros2_fork/mini.repos)进行拉取, 我们去除了部分没必要的仓, 并添加了一些需要使用的仓库. 
 
 本项目的详细文档都在各个子模块的根目录里, 如有需要可以直接[点击进行了解](https://github.com/MiRoboticsLab/cyberdog_ros2/wiki)
 
@@ -31,7 +31,7 @@
 
 ```
 $ apt-get update
-$ apt-get install nvidia-l4t-jetson-multimedia-api cuda-compiler-10-2
+$ apt-get install nvidia-l4t-jetson-multimedia-api nvidia-cuda-toolkit
 ```
 
 如是后者, 可以考虑使用arm64的Docker. 我们在未来会支持交叉编译。

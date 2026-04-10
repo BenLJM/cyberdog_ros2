@@ -202,10 +202,10 @@ retrofit2 (parent-2.2.0)
 - Source: https://github.com/square/retrofit/releases/tag/parent-2.2.0
 - Usage: as-is, static-linking
 
-ROS 2 (Foxy Fitzroy)
+ROS 2 (Humble Hawksbill)
 - License: Apache-2.0
 - Project: https://github.com/ros2/ros2
-- Source: https://github.com/ros2/ros2/releases/tag/release-foxy-20201211
+- Source: https://github.com/ros2/ros2/tree/humble
 - Usage: as-is, dynamic-linking
 
 ros2_socketcan (1.0.0)

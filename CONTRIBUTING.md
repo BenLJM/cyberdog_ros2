@@ -28,7 +28,7 @@
 
 ### 代码格式
 
-所有ROS 2相关代码均遵从`ROS 2`的标准代码规范。可阅读[Code style and language versions](https://docs.ros.org/en/foxy/Contributing/Code-Style-Language-Versions.html)进行了解。建议在提交代码前，使用[ament_lint](https://github.com/ament/ament_lint) 工具或借助`colcon test`进行快速审查。
+所有ROS 2相关代码均遵从`ROS 2`的标准代码规范。可阅读[Code style and language versions](https://docs.ros.org/en/humble/Contributing/Code-Style-Language-Versions.html)进行了解。建议在提交代码前，使用[ament_lint](https://github.com/ament/ament_lint) 工具或借助`colcon test`进行快速审查。
 
 ## 分支管理
 

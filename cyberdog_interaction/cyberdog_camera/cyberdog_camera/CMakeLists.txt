@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 project(cyberdog_camera)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" "${CMAKE_MODULE_PATH}")
 
-# Default to C++14
+# Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -26,7 +26,10 @@ find_package(interaction_msgs REQUIRED)
 find_package(ception_msgs REQUIRED)
 find_package(cyberdog_utils REQUIRED)
 find_package(OpenCV ${PKG_VER} QUIET)
-find_package(CUDA QUIET)
+find_package(CUDAToolkit QUIET)
+if(NOT CUDAToolkit_FOUND)
+  find_package(CUDA QUIET)
+endif()
 find_package(ARGUS)
 
 if(XIAOMI_VISION)
@@ -48,18 +51,27 @@ externalproject_add(
   TIMEOUT 10
 )
 
-if(NOT CUDA_FOUND)
+if(NOT CUDAToolkit_FOUND AND NOT CUDA_FOUND)
   message(WARNING "CUDA NOT found.")
   return()
 endif()
+
+# Enable CUDA language support for native CMake CUDA compilation
+enable_language(CUDA)
 
 if(NOT ARGUS_FOUND)
   message(WARNING "ARGUS NOT found.")
   return()
 endif()
 
-set(ARGUS_INC_DIR ${MYSYSROOT}/usr/src/jetson_multimedia_api/argus/samples/utils ${MYSYSROOT}/usr/src/jetson_multimedia_api/include/libjpeg-8b)
-set(ARGUS_SRC_DIR ${MYSYSROOT}/usr/src/jetson_multimedia_api/samples/common/classes)
+# Support both JetPack 4.x and JetPack 6.x multimedia API paths
+if(EXISTS "${MYSYSROOT}/opt/nvidia/jetson_multimedia_api")
+  set(JETSON_MMAPI_ROOT "${MYSYSROOT}/opt/nvidia/jetson_multimedia_api")
+else()
+  set(JETSON_MMAPI_ROOT "${MYSYSROOT}/usr/src/jetson_multimedia_api")
+endif()
+set(ARGUS_INC_DIR ${JETSON_MMAPI_ROOT}/argus/samples/utils ${JETSON_MMAPI_ROOT}/include/libjpeg-8b)
+set(ARGUS_SRC_DIR ${JETSON_MMAPI_ROOT}/samples/common/classes)
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${ARGUS_INCLUDE_DIR} ${ARGUS_INC_DIR})
@@ -80,13 +92,20 @@ add_library(argussampleutils STATIC  IMPORTED)
 set_property(TARGET argussampleutils PROPERTY IMPORTED_LOCATION ${PREFIX_DIR}/lib/libargussampleutils.a)
 add_dependencies(argussampleutils ${EXTPRJ_NAME})
 
-link_directories(${MYSYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/tegra)
+link_directories(
+  ${MYSYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/tegra
+  ${MYSYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/nvidia
+)
 
 add_compile_options(-Wno-pedantic -Wno-deprecated-declarations -Wno-unused-parameter)
 
-cuda_add_library(color_convert
+add_library(color_convert STATIC
   src/camera_base/cuda/CUDAConvert.cu
   src/camera_base/cuda/CUDACrop.cu)
+set_target_properties(color_convert PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+if(CUDAToolkit_FOUND)
+  target_link_libraries(color_convert CUDA::cudart)
+endif()
 
 set(ARGUS_SRCS
   ${ARGUS_SRC_DIR}/NvJpegEncoder.cpp
@@ -151,8 +170,13 @@ else()
     message(WARNING ">>> Build camera without Xiaomi Vision.")
 endif()
 
-target_link_libraries(maincamera rt cuda EGL nvargus nvjpeg v4l2 avformat avcodec avutil argussampleutils pthread nvbuf_utils color_convert nvosd)
-target_link_libraries(stereo_camera nvargus cuda EGL argussampleutils pthread nvbuf_utils nvjpeg v4l2)
+if(CUDAToolkit_FOUND)
+  target_link_libraries(maincamera rt CUDA::cudart EGL nvargus nvjpeg v4l2 avformat avcodec avutil argussampleutils pthread nvbufsurface color_convert nvosd)
+  target_link_libraries(stereo_camera nvargus CUDA::cudart EGL argussampleutils pthread nvbufsurface nvjpeg v4l2)
+else()
+  target_link_libraries(maincamera rt cuda EGL nvargus nvjpeg v4l2 avformat avcodec avutil argussampleutils pthread nvbuf_utils color_convert nvosd)
+  target_link_libraries(stereo_camera nvargus cuda EGL argussampleutils pthread nvbuf_utils nvjpeg v4l2)
+endif()
 
 ament_target_dependencies(maincamera ${dependencies})
 ament_target_dependencies(showimage ${dependencies})

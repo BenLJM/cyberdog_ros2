@@ -28,7 +28,7 @@ All submissions are processed according to Merge Request, and only accept proces
 
 ### Code Style
 
-All codes related to ROS 2 follow `ROS 2` coding style. Please read [Code style and language versions](https://docs.ros.org/en/foxy/Contributing/Code-Style-Language-Versions.html) for more details. It is recommended that using [ament_lint](https://github.com/ament/ament_lint) tool or `colcon test` to check before submitting the code.
+All codes related to ROS 2 follow `ROS 2` coding style. Please read [Code style and language versions](https://docs.ros.org/en/humble/Contributing/Code-Style-Language-Versions.html) for more details. It is recommended that using [ament_lint](https://github.com/ament/ament_lint) tool or `colcon test` to check before submitting the code.
 
 ## Branch management
 

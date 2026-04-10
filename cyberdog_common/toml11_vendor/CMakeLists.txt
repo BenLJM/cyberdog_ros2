@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 project(toml11_vendor)
 
 find_package(ament_cmake REQUIRED)

@@ -16,11 +16,15 @@ find_package(PkgConfig)
 
 unset(ARGUS_INCLUDE_DIR CACHE)
 find_path(ARGUS_INCLUDE_DIR Argus/Argus.h
-          HINTS /usr/src/jetson_multimedia_api/include)
+          HINTS
+            /usr/src/jetson_multimedia_api/include
+            /opt/nvidia/jetson_multimedia_api/include)
 
 unset(ARGUS_LIBRARIE CACHE)
 find_library(ARGUS_LIBRARY NAMES nvargus
-  HINTS /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/tegra)
+  HINTS
+    /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/tegra
+    /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/nvidia)
 
 set(ARGUS_LIBRARIES ${ARGUS_LIBRARY})
 

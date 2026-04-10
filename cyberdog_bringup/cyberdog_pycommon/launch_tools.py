@@ -62,8 +62,7 @@ def Load_Yaml(path, threwError=False):
     file_name = str(path).split('/')[-1]
     try:
         with open(path, 'r') as f:
-            yaml_file = yaml.safe_load(f.read())  # ros2_foxy use
-            # yaml_file = yaml.load(f.read(), Loader=yaml.FullLoader) # ros2_galactic use
+            yaml_file = yaml.safe_load(f.read())
             f.close()
     except IOError as e:
         yaml_file = None
