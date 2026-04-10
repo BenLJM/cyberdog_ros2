@@ -128,7 +128,7 @@ class PublisherPhoneIP(Node):
 
     def __init__(self):
         super().__init__('phonepublisher', namespace=get_namespace())
-        self.publisher_ = self.create_publisher(String, 'ip_notify', 0)
+        self.publisher_ = self.create_publisher(String, 'ip_notify', 10)
 
     def publisher(self, data):
         msg = String()
