@@ -3,29 +3,26 @@ on:
   push:
 
 jobs:
-  build-and-test:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-22.04]
       fail-fast: false
     steps:
+      - uses: actions/checkout@v4
       - name: Setup ROS 2
         uses: ros-tooling/setup-ros@v0.7
         with:
           required-ros-distributions: humble
-      - name: build
-        uses: ros-tooling/action-ros-ci@v0.4
-        with:
-          target-ros2-distro: humble
-          # Build only pure message/interface packages to validate
-          # ROS2 Humble message generation. C++ packages excluded
-          # as they require hardware-specific deps (CUDA, CAN, etc.)
-          package-name: >-
-            motion_msgs
-            ception_msgs
-            interaction_msgs
-            cascade_lifecycle_msgs
-            automation_msgs
+      - name: Build message packages
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --merge-install --packages-select \
+            motion_msgs \
+            ception_msgs \
+            interaction_msgs \
+            cascade_lifecycle_msgs \
+            automation_msgs \
             cyberdog_interfaces
-          skip-tests: 'true'
+        shell: bash
