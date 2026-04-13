@@ -18,6 +18,9 @@ jobs:
         uses: ros-tooling/action-ros-ci@v0.4
         with:
           target-ros2-distro: humble
+          # Build only pure message/interface packages to validate
+          # ROS2 Humble message generation. C++ packages excluded
+          # as they require hardware-specific deps (CUDA, CAN, etc.)
           package-name: >-
             motion_msgs
             ception_msgs
@@ -25,9 +28,4 @@ jobs:
             cascade_lifecycle_msgs
             automation_msgs
             cyberdog_interfaces
-            cyberdog_utils
-            cyberdog_decisionutils
-          # Skip tests: ament_lint checks (copyright, cpplint, uncrustify,
-          # flake8, etc.) fail on legacy code and are out of scope for this
-          # migration. Unit tests require a full robot environment.
-          skip-tests: true
+          skip-tests: 'true'
