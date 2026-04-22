@@ -19,7 +19,7 @@ This project contains the main ROS 2 packages of Xiaomi CyberDog®.
 
 Most of the robot applications are implemented based on ROS 2. As shown in the [architecture diagram](tools/docs/soft_arch.svg), it includes functions such as multi-device connection, multi-modal perception, multi-modal human-computer interaction, autonomous decision-making, localization, navigation, and target tracking. Currently, the DDS middleware in use is `Cyclone DDS`, and the ROS 2 Package is implemented at `Humble`.
 
-This project has been adapted for **Ubuntu 22.04 (Jammy)** and **NVIDIA JetPack 6.x** (L4T r36.4, CUDA 12.6). The specific ROS 2 source build content can be pulled through [mini.repos](tools/ros2_fork/mini.repos). We have removed some unnecessary repositories, and added some repositories that need to be used.
+This project has been adapted for **Ubuntu 20.04 (Focal)** and **NVIDIA JetPack 5.1.x** (L4T r35.x, CUDA 11.4). The specific ROS 2 source build content can be pulled through [mini.repos](tools/ros2_fork/mini.repos). We have removed some unnecessary repositories, and added some repositories that need to be used.
 
 The documentation of this project is in the root directory of each submodule. If necessary, read [this page](https://github.com/MiRoboticsLab/cyberdog_ros2/wiki).
 
@@ -31,7 +31,7 @@ If the former, you need to ensure that the following instructions are executed:
 
 ```
 $ apt-get update
-$ apt-get install nvidia-l4t-jetson-multimedia-api nvidia-cuda-toolkit
+$ apt-get install nvidia-l4t-jetson-multimedia-api cuda-toolkit-11-4
 ```
 
 If the latter, you can consider using arm64's Docker. We will support cross compilation in the future.

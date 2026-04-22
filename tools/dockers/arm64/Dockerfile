@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG FROM_IMAGE=arm64v8/ubuntu:jammy
+ARG FROM_IMAGE=arm64v8/ubuntu:focal
 ARG gfw=0
 FROM $FROM_IMAGE AS base-image
 ENV CMAKE_VER="3.27.7"
@@ -30,10 +30,10 @@ FROM build-in-gfw-${gfw} AS final
 RUN apt-get update && \
   apt-get install -q -y --no-install-recommends ca-certificates && \
   mv /etc/apt/sources.list /etc/apt/sources.list.bak && \
-  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse\n" > /etc/apt/sources.list && \
-  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse\n" >> /etc/apt/sources.list && \
-  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse\n" >> /etc/apt/sources.list && \
-  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal main restricted universe multiverse\n" > /etc/apt/sources.list && \
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal-updates main restricted universe multiverse\n" >> /etc/apt/sources.list && \
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal-backports main restricted universe multiverse\n" >> /etc/apt/sources.list && \
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal-security main restricted universe multiverse" >> /etc/apt/sources.list
 
 # setup timezone
 RUN echo 'Etc/UTC' > /etc/timezone && \
@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -q -y --no-install-recommends \
 
 # setup ros2 sources.list (replace one near you)
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu/ jammy main" > /etc/apt/sources.list.d/ros2-latest.list
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu/ focal main" > /etc/apt/sources.list.d/ros2-latest.list
 
 # install bootstrap tools
 RUN apt-get update && apt-get install --no-install-recommends -y \
@@ -130,7 +130,8 @@ RUN pip3 install -U \
   lark \
   ifcfg \
   netifaces \
-  boost
+  boost && \
+  python3 -m pip install -U importlib-metadata importlib-resources
 
 # upgrade CMake
 RUN mkdir -p /root/cmake_tmp && \
@@ -153,12 +154,12 @@ RUN cd /root/build_ros && \
 RUN cd /root/build_ros && \
   vcs import src < mini.repos
 
-# setup nvidia l4t list (JetPack 6.2 / L4T r36.4)
-RUN echo "deb https://repo.download.nvidia.com/jetson/common r36.4 main\n" > /etc/apt/sources.list.d/nvidia-l4t.list && \
-  echo "deb https://repo.download.nvidia.com/jetson/t234 r36.4 main" >> /etc/apt/sources.list.d/nvidia-l4t.list && \
+# setup nvidia l4t list (JetPack 5.1.x / L4T r35.4)
+RUN echo "deb https://repo.download.nvidia.com/jetson/common r35.4 main\n" > /etc/apt/sources.list.d/nvidia-l4t.list && \
+  echo "deb https://repo.download.nvidia.com/jetson/t194 r35.4 main" >> /etc/apt/sources.list.d/nvidia-l4t.list && \
   apt-key adv --fetch-key https://repo.download.nvidia.com/jetson/jetson-ota-public.asc
 
-# setup l4t environment (JetPack 6.2 with CUDA 12.6)
+# setup l4t environment (JetPack 5.1.x with CUDA 11.4)
 RUN mkdir -p /opt/nvidia/l4t-packages/ && \
     touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall && \
     rm /var/lib/dpkg/info/* -rf && \
@@ -167,7 +168,7 @@ RUN mkdir -p /opt/nvidia/l4t-packages/ && \
       apt-utils \
       nvidia-l4t-core \
       nvidia-l4t-jetson-multimedia-api \
-      nvidia-cuda-toolkit \
+      cuda-toolkit-11-4 \
       libnvinfer-dev \
       libnvonnxparsers-dev \
       libnvparsers-dev \

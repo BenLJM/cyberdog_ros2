@@ -64,12 +64,7 @@ if(NOT ARGUS_FOUND)
   return()
 endif()
 
-# Support both JetPack 4.x and JetPack 6.x multimedia API paths
-if(EXISTS "${MYSYSROOT}/opt/nvidia/jetson_multimedia_api")
-  set(JETSON_MMAPI_ROOT "${MYSYSROOT}/opt/nvidia/jetson_multimedia_api")
-else()
-  set(JETSON_MMAPI_ROOT "${MYSYSROOT}/usr/src/jetson_multimedia_api")
-endif()
+set(JETSON_MMAPI_ROOT "${MYSYSROOT}/usr/src/jetson_multimedia_api")
 set(ARGUS_INC_DIR ${JETSON_MMAPI_ROOT}/argus/samples/utils ${JETSON_MMAPI_ROOT}/include/libjpeg-8b)
 set(ARGUS_SRC_DIR ${JETSON_MMAPI_ROOT}/samples/common/classes)
 
@@ -92,10 +87,7 @@ add_library(argussampleutils STATIC  IMPORTED)
 set_property(TARGET argussampleutils PROPERTY IMPORTED_LOCATION ${PREFIX_DIR}/lib/libargussampleutils.a)
 add_dependencies(argussampleutils ${EXTPRJ_NAME})
 
-link_directories(
-  ${MYSYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/tegra
-  ${MYSYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/nvidia
-)
+link_directories(${MYSYSROOT}/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/tegra)
 
 add_compile_options(-Wno-pedantic -Wno-deprecated-declarations -Wno-unused-parameter)
 
@@ -171,8 +163,8 @@ else()
 endif()
 
 if(CUDAToolkit_FOUND)
-  target_link_libraries(maincamera rt CUDA::cudart EGL nvargus nvjpeg v4l2 avformat avcodec avutil argussampleutils pthread nvbufsurface color_convert nvosd)
-  target_link_libraries(stereo_camera nvargus CUDA::cudart EGL argussampleutils pthread nvbufsurface nvjpeg v4l2)
+  target_link_libraries(maincamera rt CUDA::cudart EGL nvargus nvjpeg v4l2 avformat avcodec avutil argussampleutils pthread nvbuf_utils color_convert nvosd)
+  target_link_libraries(stereo_camera nvargus CUDA::cudart EGL argussampleutils pthread nvbuf_utils nvjpeg v4l2)
 else()
   target_link_libraries(maincamera rt cuda EGL nvargus nvjpeg v4l2 avformat avcodec avutil argussampleutils pthread nvbuf_utils color_convert nvosd)
   target_link_libraries(stereo_camera nvargus cuda EGL argussampleutils pthread nvbuf_utils nvjpeg v4l2)
