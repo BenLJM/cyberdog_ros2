@@ -162,6 +162,8 @@ De-risk all three in Phase 0 before any destructive step.
 
 ## 8. Phase 0 — Backups & forensics
 
+> **Status (2026-05-16).** Layers 0–3 complete and verified (2026-04-25). Forensics analysis in `docs/PHASE0_FORENSICS_ANALYSIS.md`. Boot-mechanism test (sub-task 11 below) **completed with negative findings** in `docs/PHASE0_BOOT_MECHANISM_FINDINGS.md` — extlinux LABEL menu does not render and the DEFAULT field is ignored; JP4↔JP5 switching is therefore in-place edit of `LABEL primary` only (Phase 2 redesigned accordingly). Layer 4 + rescue drill have a dedicated x86-host runbook in `docs/PHASE0_LAYER4_RUNBOOK.md`; sub-task 9 here is superseded by it (BSP filenames and Xiaomi public-mirror status both changed since this plan was first written).
+
 **Layers produced on external USB SSD** `/media/backup/cyberdog-2026-04/`:
 
 ```text

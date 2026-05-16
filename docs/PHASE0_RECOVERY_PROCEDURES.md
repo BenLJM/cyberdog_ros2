@@ -104,35 +104,60 @@ sudo systemctl stop udisks2.service
 mkdir -p /media/backup/cyberdog-2026-04/layer4/jp4.5.1-bsp
 cd /media/backup/cyberdog-2026-04/layer4/jp4.5.1-bsp
 
-# NVIDIA L4T r32.5.2 (JetPack 4.5.1) BSP tarballs.
-# Pull from NVIDIA's archive (search jetson-linux-archive for r32.5.2):
-wget https://developer.nvidia.com/embedded/l4t/r32_release_v5.2/t186/jetson-210_linux_r32.5.2_aarch64.tbz2
+# NVIDIA L4T r32.5.2 (JetPack 4.5.1) BSP tarballs — URLs verified 2026-05-16.
+# Note: filenames are jetson_linux_* (NOT jetson-210_* which is Nano/T210).
+# 302 redirects to developer.download.nvidia.com/embedded/L4T/r32_Release_v5.2/T186/...
+wget https://developer.nvidia.com/embedded/l4t/r32_release_v5.2/t186/jetson_linux_r32.5.2_aarch64.tbz2
 wget https://developer.nvidia.com/embedded/l4t/r32_release_v5.2/t186/tegra_linux_sample-root-filesystem_r32.5.2_aarch64.tbz2
 
 # Unpack
-sudo tar xpf jetson-210_linux_r32.5.2_aarch64.tbz2
+sudo tar xpf jetson_linux_r32.5.2_aarch64.tbz2
 cd Linux_for_Tegra/rootfs
 sudo tar xpf ../../tegra_linux_sample-root-filesystem_r32.5.2_aarch64.tbz2
 cd ..
 sudo ./apply_binaries.sh
 ```
 
-Then locate Xiaomi's `athena_foxy_YYYY.MM.DD_emmc_nvme_V*.tgz` firmware bundle (last known public URL may be dead as of 2026; check the mirror in the MiRoboticsLab wiki or community archives). Extract alongside the BSP:
+**Xiaomi flashall bundle.** As of 2026-05-16, V1.0.0.94 (the version on this dog, dated 2022.01.14) is **not publicly mirrored** — the Xiaomi CDN bucket requires the exact build-hash suffix and the partner GitLab is auth-walled. Public CDN serves the older V1.0.0.66 baseline; that's our Layer 4 fallback:
 
 ```bash
 cd /media/backup/cyberdog-2026-04/layer4/
-tar xzf athena_foxy_*_emmc_nvme_V*.tgz
+# Public V1.0.0.66 baseline (2021.08.24 build, ~3 GB)
+wget https://cdn.cnbj2m.fds.api.mi-img.com/cyberdog-package/build/athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66.20210824_release_bbcc37a86a.tgz
+sha256sum athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66.20210824_release_bbcc37a86a.tgz \
+  > athena_foxy_V1.0.0.66.sha256
+tar xzf athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66.20210824_release_bbcc37a86a.tgz
 # Contains flashall.sh tailored for tegra194-mi-k91
 ```
+
+**Why this is acceptable.** A V1.0.0.66 factory flash, then immediate restore of Layer 1 (`opt-ros2-cyberdog.tar.zst` — our actual V1.0.0.94 closed userspace) and Layer 0 (`params-emmc-p12.img` — IRREPLACEABLE factory calibration) will produce a system functionally equivalent to V1.0.0.94 at the userspace level. Bootloader differs (V1.0.0.66 BL vs the V1.0.0.94 BL preserved in Layer 4b — see below); restore the V1.0.0.94 BL via the in-place OTA mechanism after the system boots, or accept the V1.0.0.66 BL since it's still a JP4.5.1-class L4T r32.5.x bootloader.
+
+### Layer 4b — preserve V1.0.0.94 bootloader payloads (run on the dog)
+
+The dog ships actual V1.0.0.94 NVIDIA bootloader OTA payloads under `/opt/ota_package/t19x/`. These are not on any public mirror and are critical for bringing a V1.0.0.66 baseline back to V1.0.0.94 BL parity:
+
+```bash
+# On the dog, with /mnt/backup mounted:
+mkdir -p /mnt/backup/cyberdog-2026-04/layer4b-v94-bl
+sudo cp -av /opt/ota_package/t19x /mnt/backup/cyberdog-2026-04/layer4b-v94-bl/
+sudo cp -av /opt/ota_package/t18x /mnt/backup/cyberdog-2026-04/layer4b-v94-bl/  # MCU side, smaller
+sha256sum /mnt/backup/cyberdog-2026-04/layer4b-v94-bl/t19x/* \
+          /mnt/backup/cyberdog-2026-04/layer4b-v94-bl/t18x/* \
+  | sudo tee /mnt/backup/cyberdog-2026-04/layer4b-v94-bl/SHA256SUMS
+sync
+```
+
+Total ~135 MB; covers `bl_only_payload`, `bl_update_payload`, `xusb_only_payload` per chip. Reapply post-flash via the existing `robot_update` / `athena_update.sh` path on the recovered dog.
 
 ### Full factory flash (only when everything else has failed)
 
 With the dog in recovery mode:
 
 ```bash
-cd /media/backup/cyberdog-2026-04/layer4/athena_foxy_*
+cd /media/backup/cyberdog-2026-04/layer4/athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66*/
 sudo ./flashall.sh
 # Takes ~30-45 min; do not disconnect power or USB.
+# This produces a V1.0.0.66 baseline. After it boots, restore V1.0.0.94 userspace below.
 ```
 
 After success, reinstall the `athena-*` packages from Layer 1 dpkg metadata:
