@@ -182,6 +182,13 @@ Add to Phase 3 build list: `morrownr/8821cu-20210916` (actively maintained, buil
   infrastructure. None block anything; clean up on the JP5 side by simply not
   migrating them.
 - Passwordless sudo is active for `mi` — convenient for the runbooks; note it.
+- **R-domain confirmed (2026-07-07):** `192.168.55.233` is reachable via the internal
+  `l4tbr0` bridge (members `eth0`, `rndis0`, `usb0`) and runs
+  `SSH-2.0-dropbear_2015.71` — a second, separate compute domain (the MCU/GD32
+  coprocessor side, per MAVProxyUser notes). Reconnaissance only; no login attempted
+  (unknown-function coprocessor, possibly motion/safety — owner decides). Phase 5 should
+  map what this domain exposes; it may be where the MCU power-gating / motion enable
+  actually lives (§2.7).
 
 ## 3. Ecosystem re-verification (July 2026)
 
