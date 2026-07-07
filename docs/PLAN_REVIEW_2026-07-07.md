@@ -459,8 +459,21 @@ where failures are cheap)
 
 ## 6. Next-actions checklist (supersedes "Pending Phase 0 work" everywhere)
 
-1. **[x86, this week — JP5 EOL Q3 2026]** Mirror-now list (D3.3), ~25 GB. Verify
-   V1.0.0.94 MD5 `b1b4a851ca59c19956b0039de316ee41`.
+> **Progress 2026-07-08.** Items 1 (first on-dog copy) and 6 (R-domain probe) done;
+> the boot re-test and MCU-motion capture need the owner at the keyboard (reboots /
+> triggering motion). Executable kits committed under repo `tools/`.
+
+1. ✅ **Mirror-now — FIRST copy on the dog's NVMe** (`~/cyberdog-mirror-2026-07/`, ~18 GB,
+   script `tools/mirror-fetch-all.sh`). Verified 2026-07-08: **V1.0.0.94 MD5
+   `b1b4a851ca59c19956b0039de316ee41` + byte-exact 5,058,308,096** ✓; V1.0.0.66 MD5
+   `bbcc37a86afe512b8a04ee6c1c05d867` ✓; r35.6.4 trio + r32.5.2 pair all pass `bzip2 -t`
+   integrity ✓; torch 2.1.0 cp38 + onnxruntime-gpu 1.16.3 cp38 present; 14 git mirrors all valid. **On-disk confirmation
+   of Phase 3 scope** (D5): audio codecs `rt5680.{c,h}`/`tas5805m.{c,h}` + stock
+   `tegra194-mi-k91{,-audio,-camera}.dts(i)` present in `cyberdog_tegra_kernel`;
+   `athena_defconfig` + `nv_ov13b10.c`/`nv_ov7251.c` present in zbwu's tree; zbwu DTS is
+   p3668-based (has `common/tegra194-audio-p3668.dtsi` as an audio starting point).
+   *Still TODO:* this is one copy on the same disk being repartitioned in Phase 2 — **must
+   be rsync'd to the backup SSD + a second medium before Phase 2** (it is NOT yet a backup).
 2. **[dog + SSD]** Attach `CYBERDOG_BACKUP`: copy Layer 4b (`/opt/ota_package/*`,
    pending since May) + **Layer 3b** (`qspi-boot-dump-2026-07-07/`) + move the
    mirrors in; `zstd -t` spot-checks.
