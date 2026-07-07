@@ -1,6 +1,8 @@
 # CyberDog 1 → JetPack 5.1.x / Ubuntu 20.04 / ROS 2 Humble Port
 
-> Living plan for porting a 2021 Xiaomi CyberDog 1 (Jetson Xavier NX, board `k91`) from the stock **JetPack 4.5.1 / L4T r32.5.2 / Ubuntu 18.04 / ROS 2 Foxy** firmware to a modern **JetPack 5.1.5 / L4T r35.6.2 / Ubuntu 20.04 / ROS 2 Humble** stack with an open voice pipeline and Foxglove-based remote UI.
+> Living plan for porting a 2021 Xiaomi CyberDog 1 (Jetson Xavier NX, board `k91`) from the stock **JetPack 4.5.1 / L4T r32.5.2 / Ubuntu 18.04 / ROS 2 Foxy** firmware to a modern **JetPack 5.1.6 / L4T r35.6.4 / Ubuntu 20.04 / ROS 2 Humble** stack with an open voice pipeline and a Lichtblick / foxglove-bridge remote UI.
+>
+> **2026-07-07 — full plan review & retarget.** See [PLAN_REVIEW_2026-07-07.md](./PLAN_REVIEW_2026-07-07.md) (referenced below as "review §…/D…"): target moved r35.6.2 → r35.6.4 (final JetPack 5; **JP5 EOL Q3 2026 — mirror all artifacts now**), a new **Phase 0.5** re-tests the confounded April boot findings, Phase 2 is redesigned around a rescue initrd (online root-shrink is impossible), Phase 3's driver scope shifted from cameras (already done in zbwu's tree) to audio codecs, and **V1.0.0.94 stock firmware turned out to be publicly downloadable** — the recovery story is much stronger than previously believed.
 
 ---
 
@@ -15,8 +17,8 @@
 - [7. Bricking-risk map](#7-bricking-risk-map)
 - [8. Phase 0 — Backups & forensics](#8-phase-0--backups--forensics)
 - [9. Phase 1 — x86 host dev environment](#9-phase-1--x86-host-dev-environment)
-- [10. Phase 2 — NVMe dual-rootfs via extlinux LABEL](#10-phase-2--nvme-dual-rootfs-via-extlinux-label)
-- [11. Phase 3 — L4T r35.6.2 BSP build](#11-phase-3--l4t-r3562-bsp-build)
+- [10. Phase 2 — Rescue initrd + offline NVMe dual-rootfs](#10-phase-2--rescue-initrd--offline-nvme-dual-rootfs)
+- [11. Phase 3 — L4T r35.6.4 BSP build](#11-phase-3--l4t-r3564-bsp-build)
 - [12. Phase 4 — First JP5 boot](#12-phase-4--first-jp5-boot)
 - [13. Phase 5 — Hardware bring-up](#13-phase-5--hardware-bring-up)
 - [14. Phase 6 — ROS 2 Humble + locomotion port](#14-phase-6--ros-2-humble--locomotion-port)
@@ -36,9 +38,9 @@
 
 The target is a Xiaomi CyberDog 1 (2021), board codename `k91`, running NVIDIA Jetson Xavier NX (Tegra194, 8 GB). Stock firmware is **JetPack 4.5.1 / L4T r32.5.2 / Ubuntu 18.04 (Lubuntu desktop) / ROS 2 Foxy**, installed via Xiaomi's proprietary `athena-*` .deb packages from an OTA channel that is no longer publicly served.
 
-Xiaomi ended the public CyberDog roadmap in 2022; the XiaoAi cloud voice service and the phone app's gRPC backend depend on services that are unreliable or dead. The goal is to modernize to **JetPack 5.1.5 / L4T r35.6.2 / Ubuntu 20.04 / ROS 2 Humble**, with XiaoAi replaced by an openWakeWord + whisper.cpp + OpenAI + Kokoro-TTS pipeline, and the phone app replaced by Foxglove Studio + a thin custom web UI over rosbridge.
+Xiaomi ended the public CyberDog roadmap in 2022; the XiaoAi cloud voice service and the phone app's gRPC backend depend on services that are unreliable or dead. The goal is to modernize to **JetPack 5.1.6 / L4T r35.6.4 / Ubuntu 20.04 / ROS 2 Humble**, with XiaoAi replaced by an openWakeWord + whisper.cpp + OpenAI + Kokoro-TTS pipeline, and the phone app replaced by Lichtblick/foxglove-bridge + a thin custom web UI over rosbridge.
 
-**Xavier NX cannot run Ubuntu 22.04.** JetPack 6 is Orin-only. L4T r35.6.2 (Ubuntu 20.04) is the ceiling.
+**Xavier NX cannot run Ubuntu 22.04.** JetPack 6 is Orin-only. L4T r35.6.4 (Ubuntu 20.04) is the ceiling — and the end of the line: **JetPack 5 reaches EOL in Q3 2026** (5.1.6 is the final release for t194) and ROS 2 Humble EOLs 2027-05-31. The end-state is a *frozen-but-modern* stack — that is the hardware's ceiling and it's fine; the post-Humble path is containers on top of the frozen base (review D10), never another base-OS port. Ubuntu Pro (free tier) carries focal security updates to 2030 (review §3.1).
 
 **Intended outcome.** Ubuntu 20.04 + ROS 2 Humble boots on a second partition of the internal NVMe. All 12 leg motors walk; all MIPI-CSI, USB, and I2C sensors work; the 3 head/body/rear STM32 MCUs communicate; Nav2 autonomy works; voice works end-to-end with a modern LLM backend; Foxglove replaces the phone app. Rollback to the factory JP4.5.1 image is always one `reboot` + extlinux label selection away.
 
@@ -60,7 +62,7 @@ Derived from live inspection of the running system and the `tegra194-mi-k91` dev
 | Subsystem | Interface | Chip / device |
 |---|---|---|
 | 12 leg motors | CAN (`can0`, 1 Mbit/s) | MIT-Cheetah-style brushless drivers |
-| 3 peripheral MCUs (head / body / rear) | USB-serial | STM32 |
+| 3 peripheral MCUs (head / body / rear) | USB-serial — **power-gated**: zero ttyUSB at idle (review §2.7) | STM32 (motor/spine domain is GD32F303 per zbwu `athena_motorcontrol`/`GD32_SPINE`) |
 | Main IMU | I²C bus 4 @ 0x68 | Bosch BMI160 |
 | Stereo SLAM cameras (×2) | MIPI-CSI | OmniVision OV7251 (VGA global-shutter) |
 | Main RGB camera | MIPI-CSI | OmniVision OV13B10 (13 MP) |
@@ -72,12 +74,14 @@ Derived from live inspection of the running system and the `tegra194-mi-k91` dev
 | Touch sensor | I²C bus 8 @ 0x20 | DSX (custom) |
 | PMIC | I²C bus 4 @ 0x3c | Maxim MAX20024 |
 | TOF sensors | GPIO-gated | *TBD, confirmed present in DTB* |
+| Wi-Fi + BT | USB (`0bda:c820`) | Realtek RTL8821CU — out-of-tree driver on 4.9 **and** on 5.10 (`morrownr/8821cu`; review §2.6) |
+| Boot flash | QSPI NOR 32 MB (`/dev/mtdblock0`) | MB1/MB2/cboot/BCT — the real bootloader home, NOT eMMC; dumped as Layer 3b (review §2.2) |
 
 **eMMC partition map** (`/dev/mmcblk0`, 16 GB, 14 GPT partitions):
 
 | # | Name | Size | Notes |
 |---|---|---|---|
-| 1 | APP | 1.6 GB | Stock rootfs (unused — rootfs is actually on NVMe) |
+| 1 | APP | 1.6 GB | **Boot island, not a rootfs** — contains only `/boot` (Image + initrd + DTB + extlinux.conf, near-identical to the NVMe copy). Possibly what cboot actually reads (review §2.3 → Phase 0.5) |
 | 2, 3 | kernel, kernel_b | 67 MB each | A/B kernel image slots |
 | 4, 5 | kernel-dtb, kernel-dtb_b | 459 KB each | A/B DTB slots |
 | 6 | recovery | 66 MB | Recovery kernel |
@@ -119,7 +123,8 @@ Live `athena_*` package names on disk correspond to the pre-migration internal n
 
 | Repo | Purpose | State |
 |---|---|---|
-| [zbwu/athena_l4t_sdk](https://github.com/zbwu/athena_l4t_sdk) (branch `athena_l4t-r35.1`) | L4T r35.1 BSP for `tegra194-mi-k91`: kernel 5.10, bootloader, DTB, build/flash scripts | Sole author zbwu, last commit Aug 2022. Two unresolved issues (#1 missing `athena_defconfig`, #2 motion controller gap) |
+| [zbwu/athena_l4t_sdk](https://github.com/zbwu/athena_l4t_sdk) (branch `athena_l4t-r35.1`) | L4T r35.1 BSP: kernel 5.10 **incl. `athena_defconfig` (exists — issue #1 was a non-recursive-clone artifact)**, cameras (`nv_ov13b10.c`/`nv_ov7251.c`) + BMI160 already ported, DTS rebased onto devkit `p3668/p2151` with `model = "Xiaomi Cyberdog"` (NOT a mi-k91 port) | Frozen Aug 2022, still the only JP5 foundation (verified 2026-07). **Works per README:** Wi-Fi/BT/eth/**CAN**/GPU/CUDA/NVMe/USB3/OTG/UART/**fan**/HDMI/**RealSense/color+stereo cams**. **Missing: mic array + speaker** (no rt5680/tas5805m). Locomotion out of scope |
+| [MiRoboticsLab/cyberdog_tegra_kernel](https://github.com/MiRoboticsLab/cyberdog_tegra_kernel) | **Stock 4.9 kernel source** — incl. `sound/soc/codecs/rt5680.{c,h}` + `tas5805m.{c,h}` and the stock DT trio `tegra194-mi-k91{,-audio,-camera}.dts(i)` | Open, official. The wiring oracle + the source for Phase 3's audio forward-port. *(Missing from this plan before the 2026-07 review)* |
 | [zbwu/cyberdog_misc](https://github.com/zbwu/cyberdog_misc) | `bms/`, `locomotion_wrapper/`, `mcu_proto/`, `usb_adapter/`, `parameters/` — low-level userspace glue | MIT, C + Python |
 | [MiRoboticsLab/cyberdog_motor_sdk](https://github.com/MiRoboticsLab/cyberdog_motor_sdk) | 12-motor CAN SDK, source, Docker cross-compile | Official, small |
 | [MiRoboticsLab/cyberdog_locomotion](https://github.com/MiRoboticsLab/cyberdog_locomotion) | Gait controller, fork of MIT Cheetah Software | Official, ROS 2 **Galactic** — needs Humble port |
@@ -136,15 +141,17 @@ Live `athena_*` package names on disk correspond to the pre-migration internal n
 | LLM | OpenAI Chat Completions (streaming) | proprietary API | Key in `/etc/cyberdog/llm.env` |
 | TTS | [Kokoro TTS](https://github.com/nazdridoy/kokoro-tts) | Apache-2 | 82 M params, en + zh bilingual, 210× realtime on GPU |
 
-**Remote UI:** [Foxglove Studio](https://github.com/foxglove/studio) + [rosbridge_suite](https://github.com/RobotWebTools/rosbridge_suite) + thin React/Vite web UI hosted on-dog via caddy.
+**Remote UI:** [foxglove_bridge](https://github.com/foxglove/ros-foxglove-bridge) (MIT, `apt install ros-humble-foxglove-bridge`) + [Lichtblick](https://github.com/Lichtblick-Suite/lichtblick) (MPL-2.0, BMW's actively-maintained fork of Foxglove v1 — v1.26.0, 2026-06) + [rosbridge_suite](https://github.com/RobotWebTools/rosbridge_suite) for the thin React/Vite web UI hosted on-dog via caddy. *(Foxglove Studio v2 went closed + account-gated in 2024; its free tier is a usable optional extra — review D12.)*
 
 ## 6. Top-3 project-killing unknowns
 
-De-risk all three in Phase 0 before any destructive step.
+De-risk all three in Phase 0.5 / early Phase 3 before any destructive step.
 
-1. **Bootloader A/B slot behavior.** CyberDog's custom cboot may tie eMMC kernel A/B selection to ignore extlinux `LABEL` fallback. If `LABEL second` in `/boot/extlinux/extlinux.conf` does not actually influence boot, the entire dual-rootfs plan collapses. **Mitigation:** non-destructively add `LABEL second` pointing at the *same known-good JP4.5 kernel* and verify boot-menu selection works.
-2. **Closed-source `.so` dependency graph.** If `libContentMotionAPI.so` or `libathena_touch_core.so` is in `cyberdog_locomotion`'s runtime path (not just app-facing surfaces), the Humble port stalls until reverse-engineering or stubbing is done. **Mitigation:** run `ldd` + `readelf -d` + `nm -D` across every binary under `/opt/ros2/cyberdog/` during Phase 0 to build a full symbol graph *before any write*. Also `strings` each blob for Xiaomi cloud endpoints — some are cloud-dependent and unusable regardless.
-3. **Missing `athena_defconfig`** (zbwu Issue #1, unresolved 16 months). **Mitigation:** the running kernel exposes `/proc/config.gz` (`CONFIG_IKCONFIG_PROC=y` is on). Snapshot this plus `/sys/firmware/devicetree/base` via `dtc`. Diff against NVIDIA's stock r35.6.2 `tegra_defconfig` to synthesize the CyberDog-specific delta (BMI160_I2C, TCA6424A, MAX20024 regulator, TAS5805M, RT5680, INA3221, VL53L1X TOF, OV7251/OV13B10 cameras). This closes Issue #1 and gives a buildable kernel.
+> **2026-07-07: the original three unknowns are all resolved.** (1) A/B slots: decorative — but the extlinux tests were *confounded*, see new #1 below. (2) Closed-`.so` graph: mapped in Phase 0 forensics — locomotion is open-path. (3) `athena_defconfig`: **exists** in zbwu's tree; issue #1 was a non-recursive-clone artifact (review §3.2). Bonus: **secure-boot fuses verified unburned** (`odm_production_mode=0x0`, review §2.1) — self-built kernels/bootloaders will boot; a never-tested killer assumption is now fact. The NEW top-3:
+
+1. **Which extlinux.conf does cboot read — NVMe p1 or the eMMC APP p1 boot island?** Two near-identical copies exist; every April test edited only the NVMe copy, so "`DEFAULT` is ignored" may be an artifact of editing a file cboot never reads (review §2.3). If the eMMC copy is live and `DEFAULT` works there, the safer dual-LABEL switching design is resurrected. **Resolve in Phase 0.5 with marker bootargs — cheap, reversible.**
+2. **Does this cboot load kernel/DTB from files (`LINUX`/`FDT` lines) at all?** Stock boots the eMMC kernel *partition* (`LABEL primary` has no `LINUX` line; p2 carries an NVDA-wrapped copy of the same 4.9.201 build — review §2.4). If `FDT`-from-file fails, JP4/JP5 cannot pair kernels with their own DTBs and Phase 2 must be redesigned. **Resolve in Phase 0.5 with the model-string FDT test.**
+3. **Audio-codec forward-port complexity (`rt5680` + `tas5805m`, 4.9 → 5.10 ASoC).** The one driver area zbwu never did (his README: mic/speaker "not supported"); sources are open in `cyberdog_tegra_kernel`. Machine-driver/DT-graph churn is the risk. **Scope in early Phase 3.**
 
 ## 7. Bricking-risk map
 
@@ -154,15 +161,16 @@ De-risk all three in Phase 0 before any destructive step.
 |---|---|---|
 | **0** Backup | Low | Pure reads. Only risk: inconsistent tarball if ROS 2 keeps writing state — stop services during Layer 2 dump. |
 | **1** x86 env | None | Host-only. |
-| **2** NVMe partition surgery + `extlinux.conf` | **High** | First meaningful brick risk. Serial console (`ttyTCU0`) wired before touching anything. **Never write to eMMC partitions in this phase.** |
+| **0.5** Boot-path disambiguation | Low-Med | Marker bootargs + FDT-copy test; every step reversible; worst case ≈ 30-min forced-recovery revert. Schedule with the next day free. |
+| **2** Rescue initrd + offline NVMe surgery + `extlinux.conf` | **High** | First meaningful brick risk. Surgery runs OFFLINE from the RAM rescue initrd (online root-shrink is impossible — review §2.5). Access path = USB-gadget console (RNDIS + ttyGS0). eMMC stays read-only *except* file-level extlinux edits on APP p1 if Phase 0.5 proves that's the live copy (p01 dd-dump in hand). |
 | **3** Kernel rebase | None | Host-only artifacts. |
-| **4** First JP5 boot | **High** | Bad initrd or missing `nvme`/`ext4` driver → kernel panic. Mitigation: bake critical drivers `=y`. Serial console attached. |
+| **4** First JP5 boot | **High** | Bad initrd or missing `nvme`/`ext4` driver → kernel panic. Mitigations: bake critical drivers `=y`; `panic=15` bootarg; **auto-revert initrd hook** (root-mount failure → self-restore JP4 extlinux, review D5); USB-gadget console once the kernel is up. |
 | **5** CAN + motors | Medium physical | Motor misbehavior → physical danger. **Dog on a stand, legs off ground, every session.** Not a software brick. |
 | **6–10** Humble + voice + UI | Low | Software-only; rollback = reboot + LABEL primary. |
 
 ## 8. Phase 0 — Backups & forensics
 
-> **Status (2026-05-16).** Layers 0–3 complete and verified (2026-04-25). Forensics analysis in `docs/PHASE0_FORENSICS_ANALYSIS.md`. Boot-mechanism test (sub-task 11 below) **completed with negative findings** in `docs/PHASE0_BOOT_MECHANISM_FINDINGS.md` — extlinux LABEL menu does not render and the DEFAULT field is ignored; JP4↔JP5 switching is therefore in-place edit of `LABEL primary` only (Phase 2 redesigned accordingly). Layer 4 + rescue drill have a dedicated x86-host runbook in `docs/PHASE0_LAYER4_RUNBOOK.md`; sub-task 9 here is superseded by it (BSP filenames and Xiaomi public-mirror status both changed since this plan was first written).
+> **Status (2026-07-07).** Layers 0–3 complete and verified (2026-04-25). **Layer 3b (QSPI NOR + eMMC boot0/1) captured 2026-07-07** on-dog at `~/cyberdog-forensics-2026-04-22/qspi-boot-dump-2026-07-07/` — replicate to the backup SSD next session. **V1.0.0.94 factory firmware is publicly downloadable after all** (official CDN, hash from MiRoboticsLab discussion #133 — review §3.2); Layer 4 targets it directly and the old V1.0.0.66-baseline contortion is demoted to historical note. The April boot-mechanism findings (`PHASE0_BOOT_MECHANISM_FINDINGS.md`) are **confounded** — two extlinux.conf copies exist and only the NVMe one was edited (review §2.3); the new **Phase 0.5** re-tests before Phase 2. Layer 4 + rescue drill runbook: `PHASE0_LAYER4_RUNBOOK.md` (updated 2026-07-07 with V1.0.0.94 + mirror-now list — **JetPack 5 EOL is Q3 2026, download this week**). Remaining Phase 0 work = review §6 checklist.
 
 **Layers produced on external USB SSD** `/media/backup/cyberdog-2026-04/`:
 
@@ -193,12 +201,16 @@ layer3/                                 # eMMC block-level, ~8 GB compressed
   emmc-parts/p01..p14.img               # per-partition dumps for surgical restore
   gpt.bin                               # sgdisk --backup
 
-layer4/                                 # factory-reset path from bare silicon, ~6 GB
-  jp4.5.1-bsp/                          # NVIDIA Jetson-210_Linux_R32.5.1_aarch64.tbz2,
-                                        #   Tegra_Linux_Sample-Root-Filesystem_R32.5.1_aarch64.tbz2
-  xiaomi-flashall.tgz                   # Xiaomi's athena_foxy_*_emmc_nvme_V*.tgz + flashall.sh
-                                        #   (per https://github.com/MiRoboticsLab/cyberdog_ros2/wiki/
-                                        #    %E5%A6%82%E4%BD%95%E7%BA%BF%E5%88%B7%E9%93%81%E8%9B%8B)
+layer3b/                                # NEW 2026-07-07 — bootloader media (review §2.2)
+  qspi-mtdblock0.img                    # 32 MiB QSPI NOR: MB1/MB2/cboot/BCT — THE brick-relevant flash
+  emmc-boot0.img, emmc-boot1.img        # 4 MiB each (identical)
+
+layer4/                                 # factory-reset path from bare silicon, ~11 GB
+  jp4.5.1-bsp/                          # NVIDIA jetson_linux_r32.5.2 + sample rootfs (T186 path;
+                                        #   NOT jetson-210_* — that's Nano)
+  athena_foxy_2022.01.14_emmc_nvme_V1.0.0.94_release_b1b4a851ca.tgz   # EXACT stock firmware, 5.06 GB
+  athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66.*_bbcc37a86a.tgz         # secondary baseline, 5.08 GB
+                                        #   (flashall.sh per the MiRoboticsLab flashing wiki)
 ```
 
 **Rescue drill (non-negotiable).** Before Phase 2 starts: on x86 host, `losetup` the Layer 2 tarball onto a scratch image, chroot via `qemu-aarch64-static`, confirm `/etc/os-release` reads correctly. Write the steps down. Projects that skip this regret it.
@@ -224,7 +236,7 @@ layer4/                                 # factory-reset path from bare silicon, 
 8. Per-partition loop: `for i in $(seq 1 14); do sudo dd if=/dev/mmcblk0p$i of=layer3/emmc-parts/p$(printf %02d $i).img bs=1M conv=fsync; done`.
 9. On x86: mirror NVIDIA JP4.5.1 BSP + Xiaomi's latest public `athena_foxy_*_emmc_nvme_V*.tgz` (if still available); tag under a named release dir.
 10. Rescue drill (above).
-11. **Non-destructive bootloader test**: append a harmless `LABEL second` to `/boot/extlinux/extlinux.conf` pointing at the *same current* `Image`/`initrd`. Reboot, type `second` at prompt, confirm identical `uname`. Reboot again, let timeout → `primary`. Proves the dual-boot mechanism before Phase 2 depends on it.
+11. ~~**Non-destructive bootloader test** (`LABEL second`)~~ — performed 2026-04-25 with negative results, then found **confounded** (two extlinux.conf copies — review §2.3). Superseded by **Phase 0.5** below.
 
 **Verification gate**
 
@@ -232,70 +244,70 @@ layer4/                                 # factory-reset path from bare silicon, 
 - `tar -tf layer2/rootfs-nvme.tar.zst | wc -l` ≥ 350,000 entries.
 - `zstd -t layer3/emmc-full.img.zst` passes.
 - Rescue-drill chroot prints valid `/etc/os-release`.
-- `LABEL second` boot test passes.
+- Phase 0.5 boot-path disambiguation completed and written up (replaces the old `LABEL second` gate).
 
 **Rollback.** N/A — no writes to dog except the harmless extlinux entry (restore from saved copy if needed).
 
 **Time: ~6 evenings (18 hrs).** `dd` + `tar` are IO-bound on USB-3; run overnight.
 
+### Phase 0.5 — boot-path disambiguation (added 2026-07-07, runs after Phase 0 sign-off)
+
+Full procedure + rationale: **review D2**. Summary — 1–2 evenings, 3–4 reboots, all reversible; schedule with the next day free:
+
+1. Marker bootarg on `LABEL primary` in the **NVMe** extlinux.conf → reboot → `/proc/cmdline`. Absent? Repeat on the **eMMC APP** copy. Determines which file is cboot's real pivot.
+2. If the eMMC copy is live: **re-run the `DEFAULT`-field test there.** If `DEFAULT` works, adopt the safer dual-LABEL switching design in Phase 2.
+3. **FDT-from-file test:** point `FDT` at a DTB copy whose `model` string carries a suffix; read `/proc/device-tree/model` after boot. Pass ⇒ per-OS DTB pairing works ⇒ Phase 2/4 design is safe. Fail ⇒ **stop; redesign Phase 2 before any surgery.**
+4. Revert everything; write `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2.
+
 ## 9. Phase 1 — x86 host dev environment
 
 On Ubuntu 22.04 host:
 
-- Install NVIDIA SDK Manager; pull JetPack 5.1.5 (L4T r35.6.2).
+- Install NVIDIA SDK Manager; pull JetPack 5.1.6 (L4T r35.6.4).
 - Fork all repos under the owner's GitHub and clone pinned:
-  - `<user>/athena_l4t_sdk` (fork of zbwu), branch `cyberdog-humble-r35.6.2` off `athena_l4t-r35.1`.
+  - `<user>/athena_l4t_sdk` (fork of zbwu), branch `cyberdog-humble-r35.6.4` off `athena_l4t-r35.1`.
   - Submodule forks: `<user>/athena_l4t_kernel`, `athena_l4t_nvidia`, `athena_l4t_jakku_dts`.
   - `cyberdog_misc`, `cyberdog_motor_sdk`, `cyberdog_locomotion`, `cyberdog_ros2`, `cyberdog_ws`.
 - Build Docker image `cyberdog-builder:r35.6` with `aarch64-linux-gnu-gcc-9/11`, `bison flex libssl-dev bc device-tree-compiler dtc`, ROS 2 Humble source-build deps.
 - Install Xiaomi flashing prereqs on host: `sudo apt install device-tree-compiler nfs-common sshpass abootimg network-manager libxml2-utils`.
 - `MANIFEST.yaml` records exact commit hashes of all repos.
+- **Track S starts here (review D8):** port `cyberdog_locomotion` + `cyberdog_ws` Galactic→Humble on the x86 host and make it walk in `cyberdog_simulator` — pure software, overlaps Phases 2–5, and surfaces any locomotion-port showstopper while aborting is still free. Phase 6 then merely deploys the result.
+- Also clone/mirror `MiRoboticsLab/cyberdog_tegra_kernel` (audio-codec + DT sources) and `morrownr/8821cu-20210916` (Wi-Fi driver).
 
 **Verification.** `docker run cyberdog-builder:r35.6 aarch64-linux-gnu-gcc --version` prints 9.x/11.x; stock `tegra_defconfig` kernel builds clean.
 
 **Time: ~3 evenings (9 hrs).**
 
-## 10. Phase 2 — NVMe dual-rootfs via extlinux LABEL
+## 10. Phase 2 — Rescue initrd + offline NVMe dual-rootfs
 
-**The trick that makes this safe:** keep eMMC bootloader + kernel partitions entirely untouched. Shrink `nvme0n1p1` from 117 → 50 GB, create `nvme0n1p2` (50 GB, JP5 rootfs) and `nvme0n1p3` (~17 GB, `/data` shared). Store the new JP5 kernel at `/boot-jp5/` **inside the still-working JP4.5 rootfs on p1**, so extlinux on p1 loads either:
+> **Redesigned twice:** 2026-04-25 (`PHASE0_BOOT_MECHANISM_FINDINGS.md` — edit-in-place) and **2026-07-07** (review D2/D4: those findings were *confounded*, AND `resize2fs` cannot shrink a mounted root — the original sub-task 2 would have failed on the night). The switch mechanism — edit-in-place vs dual-LABEL `DEFAULT`, and on WHICH filesystem — is decided by **Phase 0.5**, which must complete first.
 
-- `LABEL primary` → `/boot/Image` (JP4.5) + `root=UUID=<p1>` → unchanged CyberDog.
-- `LABEL second`  → `/boot-jp5/Image` (JP5) + `root=UUID=<p2>` → new system.
-
-This keeps the Xiaomi bootloader chain completely untouched. Rollback = reboot + select `primary`.
-
-**Critical files**
-
-- `/boot/extlinux/extlinux.conf` — the pivot point
-- `/boot-jp5/{Image,initrd,dtb/tegra194-mi-k91.dtb}` on p1 — staged JP5 kernel
-- `/etc/fstab` on p2 — mounts p2 as `/`, p3 as `/data`
+**Design.** eMMC bootloader chain + kernel partitions stay untouched. NVMe becomes: p1 (50 GB, JP4.5 — shrunk **offline**) · p2 (50 GB, JP5 rootfs) · p3 (~17 GB, shared `/data`). JP5 kernel artifacts live as *files* (`/boot-jp5/{Image,initrd,dtb}`) on whichever filesystem Phase 0.5 proved cboot reads; JP4↔JP5 switching edits that one `extlinux.conf` (atomic `rename(2)`) — or just flips `DEFAULT`, if Phase 0.5 resurrected it.
 
 **Sub-tasks**
 
-1. Stop ROS 2 + docker; ideally boot single-user.
-2. `e2fsck -f /dev/nvme0n1p1`; `resize2fs /dev/nvme0n1p1 45G`; `parted` shrink p1 to 50 GB, create p2 and p3.
-3. `mkfs.ext4 -L JP5_ROOT /dev/nvme0n1p2`; `mkfs.ext4 -L DATA /dev/nvme0n1p3`.
-4. `mkdir /boot-jp5` on p1. Populate initially with a **copy of the current JP4.5 kernel** so `LABEL second` boots the *same* rootfs as `LABEL primary` — proves the dual-boot mechanism before JP5 is introduced.
-5. Update `/boot/extlinux/extlinux.conf`; keep backup at `/boot/extlinux/extlinux.conf.pre-jp5`.
-6. Reboot, select `second`, verify identical `uname`. Reboot, let timeout → `primary`.
+1. **Build + rehearse the RAM rescue initrd (2–3 evenings).** Busybox + dropbear + USB-gadget bring-up (RNDIS `192.168.55.1` **and** `ttyGS0` serial console — reuse the stock `/opt/nvidia/l4t-usb-device-mode` configfs script), booted from its own extlinux entry with the *stock JP4 kernel*, staying in initramfs (never mounts NVMe). Rehearse boot-in/SSH-in/boot-out twice. **This is permanent infrastructure:** several recovery-matrix rows drop from "forced-recovery + x86 host" to "boot rescue label, fix over SSH".
+2. **Offline surgery from the rescue environment (1 evening):** `e2fsck -f /dev/nvme0n1p1` → `resize2fs /dev/nvme0n1p1 45G` → `parted` shrink p1 to 50 GB → create p2 + p3 → `mkfs.ext4 -L JP5_ROOT /dev/nvme0n1p2`, `mkfs.ext4 -L DATA /dev/nvme0n1p3` → `resize2fs /dev/nvme0n1p1` (grow back into p1's final size) → reboot to JP4, verify untouched.
+3. **Boot-switch rehearsal with two identical JP4 kernels** (`/boot/Image` vs `/boot/Image.copy` + marker bootargs): implement `cyberdog-boot-switch jp4|jp5` against the Phase 0.5-proven pivot file, verify atomicity (`cp` to `.tmp` + `mv`) and that both paths boot, **before** any JP5 kernel exists.
+4. Record p1/p2/p3 UUIDs in `MANIFEST.yaml`; keep `extlinux.conf.{jp4,jp5}-saved` canonical copies next to the live one.
 
-**Verification.** `lsblk` shows p1 / p2 / p3. Both labels boot successfully. UUIDs recorded in `MANIFEST.yaml`.
+**Verification.** `lsblk` shows p1/p2/p3; JP4 boots normally post-shrink; rescue label boots + SSH over USB works; switch rehearsal passes repeated cycles.
 
-**Rollback.** Restore `extlinux.conf.pre-jp5`. If extlinux itself is broken, fall back to Phase 0 Layer 3 restore via USB-OTG force-recovery from x86 host — USB-serial cable on `ttyTCU0` stays connected throughout this phase.
+**Rollback.** Botched extlinux → boot rescue label, restore from saved copy. Rescue label itself broken → forced-recovery + x86 host (`PHASE0_RECOVERY_PROCEDURES.md` §1, ~30 min). Filesystem damage → Layer 2/3 restores, unchanged.
 
-**Time: ~2 evenings (6 hrs).** Schedule on a night with the next full day free.
+**Time: ~4 evenings (12 hrs).** (Was 2 — the rescue initrd is new scope, and worth it.) Schedule surgery night with the next full day free.
 
-**Fallback if extlinux LABEL ignored:** use eMMC A/B via `nvbootctrl set-active-boot-slot 1`. Higher bricking risk (bad slot B + bad rollback counter can lock the device); use only if Phase 0 non-destructive test fails.
+**Fallback if partition surgery is unpalatable:** loopback-file JP5 rootfs (`/jp5root.img` on p1, `losetup`+pivot from a custom JP5 initrd) — zero surgery, one-file reversal, modest I/O overhead. Back-pocket option only (review D4). The old `nvbootctrl` slot-B fallback is **retired** (proven decorative in April).
 
-## 11. Phase 3 — L4T r35.6.2 BSP build
+## 11. Phase 3 — L4T r35.6.4 BSP build
 
-**Decision: rebase to r35.6.2, not zbwu's stale r35.1.** ~60 security/kernel fixes since r35.1; zbwu's branch is 20 months stale; starting a fork 20 months behind compounds maintenance cost forever.
+**Decision: rebase to r35.6.4, not zbwu's stale r35.1.** zbwu's branch is 4 years frozen; r35.6.4 (2026-02) is the **final** JetPack 5 release — after JP5's Q3 2026 EOL there will never be another rebase target, so land on it once and be done. Scope is smaller than originally feared: cameras + IMU + defconfig already exist in zbwu's tree (review §3.2); the genuinely new work is **audio**.
 
 **Deliverables**
 
-- Fork branches `cyberdog-humble-r35.6.2` in all four `athena_l4t_*` repos.
-- `patches/` directories capturing zbwu's deltas vs upstream r35.1, rebased onto r35.6.2.
-- **Synthesized `athena_defconfig`** from Phase 0 `/proc/config.gz` diffed against r35.6.2 `tegra_defconfig`. CyberDog-specific `CONFIG_*`:
+- Fork branches `cyberdog-humble-r35.6.4` in all four `athena_l4t_*` repos.
+- `patches/` directories capturing zbwu's deltas vs upstream r35.1, rebased onto r35.6.4.
+- **Verified `athena_defconfig`** — it **exists** in zbwu's kernel tree (`arch/arm64/configs/athena_defconfig`; issue #1 was a clone artifact). Diff-review it against Phase 0 `/proc/config.gz` + r35.6.4 `tegra_defconfig` rather than reconstructing. CyberDog-specific `CONFIG_*` to confirm:
   - `CONFIG_IIO_BMI160_I2C=y` (IMU)
   - `CONFIG_GPIO_TCA6424=y` (GPIO expander)
   - `CONFIG_REGULATOR_MAX20024=y` (PMIC)
@@ -303,27 +315,33 @@ This keeps the Xiaomi bootloader chain completely untouched. Rollback = reboot +
   - `CONFIG_SND_SOC_RT5680=y` (codec)
   - `CONFIG_SENSORS_INA3221=y` (current monitor)
   - `CONFIG_VL53L1X=y` (TOF) — confirm from live DTB
-  - OV7251 / OV13B10 camera drivers (Xiaomi-patched)
+  - OV7251 / OV13B10 camera drivers — **already ported in zbwu's tree** (`nv_ov13b10.c`/`nv_ov7251.c`, `CONFIG_NV_VIDEO_OV13B10/OV7251=m`); rebase, don't rewrite
   - `CONFIG_CAN_C_CAN_PLATFORM=y`, `CONFIG_CAN_RAW=y` (motor bus)
-- Built artifacts: `Image`, `tegra194-mi-k91.dtb`, initrd with critical drivers baked `=y`, out-of-tree `*.ko`, ready for staging to `/boot-jp5/` on the dog.
+  - Note: zbwu's defconfig uses generic `CONFIG_GPIO_PCA953X=y` for the TCA6424s (covers the tca64xx family) and HID-sensor-hub configs alongside the BMI160 sources — verify the IMU path empirically in Phase 5
+- **NEW — audio codec forward-port (the critical path to Phase 8):** `rt5680` + `tas5805m` from `cyberdog_tegra_kernel` (4.9) → 5.10 ASoC, plus re-authoring the `tegra194-mi-k91-audio.dtsi` nodes onto zbwu's p3668-based DTS (review D5). Scope the ASoC API churn early; this is new unknown #3.
+- **NEW — `rtl8821cu` out-of-tree Wi-Fi module** (`morrownr/8821cu-20210916`): stock Wi-Fi is USB RTL8821CU with no in-tree 5.10 driver (review §2.6). Plus `rtl8821c` BT firmware from linux-firmware into the rootfs.
+- **NEW — auto-revert initrd hook:** on root-mount failure, mount the boot-pivot FS, restore `extlinux.conf` from the jp4-saved copy (atomic `rename(2)`), `sync`, `reboot -f`; plus `panic=15` in APPEND. Converts the most likely Phase 4 failure from a 30-min USB rescue into a self-healing reboot (review D5). Rehearse deliberately in Phase 4.
+- **Optional, off critical path — PREEMPT_RT:** official on r35.x for Xavier NX (developer-preview): `./kernel-5.10/scripts/rt-patch.sh apply-patches`, rebuild nvdisplay against it (headless operation dodges the display risk). Only after locomotion is stable on the stock kernel (review §3.1).
+- **DTS strategy:** extend zbwu's proven-booting `tegra194-p3668-0001-p2151-0000.dts` (`model = "Xiaomi Cyberdog"`); use stock `tegra194-mi-k91{,-audio,-camera}.dts(i)` from `cyberdog_tegra_kernel` as the wiring oracle. Do **not** attempt a from-scratch mi-k91 port (review §3.2).
+- Built artifacts: `Image`, DTB, initrd with critical drivers baked `=y` + auto-revert hook, out-of-tree `*.ko` (incl. 8821cu), ready for staging to `/boot-jp5/`.
 
 **Sub-tasks**
 
-1. Via SDK Manager or `source_sync.sh`, clone NVIDIA r35.6.2 kernel + bootloader sources.
+1. Via SDK Manager or `source_sync.sh`, clone NVIDIA r35.6.4 kernel + bootloader sources.
 2. Extract zbwu deltas: `git format-patch upstream-r35.1..athena_l4t-r35.1` in each submodule.
-3. Rebase onto r35.6.2 in fork; resolve conflicts (expect hits in DTB fragments and camera/display drivers).
+3. Rebase onto r35.6.4 in fork; resolve conflicts (expect hits in DTB fragments and camera/display drivers).
 4. Synthesize `athena_defconfig` per above; commit as `arch/arm64/configs/athena_defconfig` in kernel fork.
 5. Build in Docker: `make athena_defconfig && make -j Image dtbs modules`.
 6. Package into tarball for staging.
 
 **Verification.** Clean build; `file Image` arm64; DTB decompiles via `dtc`; no missing symbols from `cyberdog_motor_sdk` link.
 
-**Time: ~20–30 evenings (60–90 hrs).** The single biggest phase.
+**Time: ~15–25 evenings (45–75 hrs).** Still the biggest phase, but cameras/defconfig are already done in zbwu's tree; audio is the new core work (review D5).
 
 **Risks**
 
 - r35.1 → r35.6.x kernel API churn in out-of-tree drivers (camera subsystem especially). Port one driver at a time.
-- Closed NVIDIA blobs (nvdec, nvenc, GPU FW) in `athena_l4t_nvidia` may have ABI changes. Pull fresh from r35.6.2 BSP; do not carry zbwu's forward.
+- Closed NVIDIA blobs (nvdec, nvenc, GPU FW) in `athena_l4t_nvidia` may have ABI changes. Pull fresh from r35.6.4 BSP; do not carry zbwu's forward.
 - Missed driver in `athena_defconfig` → Phase 5 hardware fails. Mitigate: enable generously `=m` where unclear.
 
 ## 12. Phase 4 — First JP5 boot
@@ -336,18 +354,25 @@ This keeps the Xiaomi bootloader chain completely untouched. Rollback = reboot +
 2. Transfer to dog: with dog booted into JP4.5 (LABEL primary), `rsync -aAXH Linux_for_Tegra/rootfs/ mi@cyberdog:/mnt/p2/`.
 3. Stage kernel + DTB + initrd to `/boot-jp5/` on p1.
 4. Edit `/mnt/p2/etc/fstab`: p2 as `/`, p3 as `/data`.
-5. Netplan: copy Wi-Fi creds from Layer 0, configure `wlan0` via NetworkManager (20.04 default).
-6. Reboot → select `LABEL second` → monitor serial console (`screen /dev/ttyUSB0 115200`). Expect: cboot → kernel load → mount p2 → systemd-journald → `sshd` up.
+5. **Assume no Wi-Fi on first boot** (8821cu is out-of-tree): enable `nv-l4t-usb-device-mode` (RNDIS `192.168.55.1` + `ttyGS0` gadget serial console) in the rootfs **before** first boot — that's the access path. Then install the 8821cu module, copy Wi-Fi creds from Layer 0, configure via NetworkManager.
+6. Reboot → switch to JP5 per the Phase 2 mechanism → watch the USB-gadget console. Expect: cboot → kernel load → mount p2 → systemd-journald → `sshd` up.
+7. **Auto-revert drill:** once JP5 boots, deliberately point `root=` at a bogus partition for one boot and verify the initrd hook restores JP4 automatically (review D5/D6). Re-switch to JP5 afterwards.
+8. Hardening + lifecycle: `pro attach` (Ubuntu Pro free tier → focal ESM to 2030); change every stock password (`pi/123`, `root/123`, `mi` — all community-documented).
 
-**Verification.** `ssh mi@cyberdog` on JP5 side works. `uname -r` shows `5.10.x-tegra`. `lsmod` shows expected drivers. `ip a` shows eth0 + wlan0.
+**Verification.** `ssh mi@192.168.55.1` on JP5 side works over USB. `uname -r` shows `5.10.x-tegra`. `lsmod` shows expected drivers incl. `8821cu`. `ip a` shows usb0 + wlan0 (+ eth0).
 
-**Rollback.** Reboot → `LABEL primary` → fully-working JP4.5.1.
+**Rollback.** Switch back per the Phase 2 mechanism (or let the auto-revert hook do it) → fully-working JP4.5.1.
 
 **Time: ~5 evenings (15 hrs).**
 
 ## 13. Phase 5 — Hardware bring-up
 
-**Order: CAN → motor SDK → MCUs → BMS → I²C → cameras → audio.** Safety-critical first, passive reads middle, GPU-dependent last.
+**Order: thermal/fan → CAN → motor SDK → MCUs → BMS → I²C → cameras → audio.** Safety-critical first, passive reads middle, GPU-dependent last.
+
+### 5.0 Thermal & fan — gate for everything GPU-heavy (NEW, review D7)
+
+- zbwu lists fan/tach/PWM as working on r35.1 — re-verify on the r35.6.4 rebase **before** any sustained GPU load: `nvfancontrol` profile present, fan spins under load, tach reads, thermal zones sane.
+- 30-min `tegrastats` soak at the target nvpmodel; compare against the stock baseline (idle-ish, 15 W 6-core, fan `quiet`: CPU 56 °C / GPU 53.5 °C). Sealed chassis — do not skip.
 
 ### 5.1 CAN bus + motor SDK — dog on stand, legs off ground
 
@@ -357,7 +382,8 @@ This keeps the Xiaomi bootloader chain completely untouched. Rollback = reboot +
 
 ### 5.2 MCU comms
 
-- `usb_adapter` (from `cyberdog_misc`) enumerates 3 USB-serial (`/dev/ttyUSB{0,1,2}` → head/body/rear STM32s).
+- **MCUs are power-gated** — zero `/dev/ttyUSB*` exist at idle even on stock (review §2.7). *Prerequisite (do on the JP4 side before Phase 2):* capture the enable sequence — `udevadm monitor` + TCA6424 GPIO states while triggering stand/motion on the stock stack; also chase the unverified `192.168.55.233` "R-domain" community lead. Then, on JP5:
+- Replay the enable sequence; `usb_adapter` (from `cyberdog_misc`) enumerates 3 USB-serial (`/dev/ttyUSB{0,1,2}` → head/body/rear MCUs).
 - `mcu_proto` parses telemetry frames; verify against Phase 0 `dmesg-boot.log` baseline.
 
 ### 5.3 BMS
@@ -378,7 +404,7 @@ This keeps the Xiaomi bootloader chain completely untouched. Rollback = reboot +
 
 - `v4l2-ctl --list-devices` shows OV7251 stereo pair, OV13B10, RealSense.
 - GStreamer pipeline `nvarguscamerasrc ! fakesink` succeeds for each MIPI-CSI sensor.
-- RealSense via librealsense2 for JP5 r35.6.2.
+- RealSense via librealsense2 for JP5 r35.6.4.
 
 ### 5.6 Audio (deep integration deferred to Phase 8)
 
@@ -409,7 +435,9 @@ Glibc forward-compat: `ldd --version` on 18.04 (2.27) vs 20.04 (2.31). Most case
 
 ## 14. Phase 6 — ROS 2 Humble + locomotion port
 
-**Install strategy: source-build ROS 2 Humble on Ubuntu 20.04.** Tier-3 binary coverage gaps will bite in Nav2 + locomotion; source-build once is faster than firefighting later. `colcon --packages-up-to` for iterative builds.
+**Install strategy: source-build ROS 2 Humble on Ubuntu 20.04.** Tier-3 binary coverage gaps will bite in Nav2 + locomotion; source-build once is faster than firefighting later. `colcon --packages-up-to` for iterative builds. *(Re-validated 2026-07: still the standard JP5 path — known pins like setuptools 58.2.0 apply, no new breakage; RoboStack's `robostack-humble` on linux-aarch64 is a maintained fallback for CPU-side nodes only — review §3.1.)*
+
+**Most of the Galactic→Humble port itself happens off-device in Track S** (Phase 1, review D8): ported + walking in `cyberdog_simulator` on x86 before this phase starts. Phase 6 deploys and integrates that result on the dog.
 
 **Critical files to port**
 
@@ -427,9 +455,9 @@ Glibc forward-compat: `ldd --version` on 18.04 (2.27) vs 20.04 (2.31). Most case
 
 **Verification.** `ros2 node list` shows all expected nodes. Trot telemetry matches JP4.5 within 5 % on control-loop rate.
 
-**Time: ~20–25 evenings (60–75 hrs).**
+**Time: ~12–18 evenings on-device** (Track S absorbed the port work off-device — review D8).
 
-**Risks.** Humble's new executors have different latency profiles — audit MIT Cheetah control loop's `SCHED_FIFO` priorities.
+**Risks.** Humble's new executors have different latency profiles — audit MIT Cheetah control loop's `SCHED_FIFO` priorities. (If jitter is provably problematic, the optional PREEMPT_RT kernel from Phase 3 is the escalation path.)
 
 ## 15. Phase 7 — Perception, Nav2, teleop
 
@@ -445,6 +473,8 @@ Glibc forward-compat: `ldd --version` on 18.04 (2.27) vs 20.04 (2.31). Most case
 
 Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + TensorRT (`small`) → OpenAI streaming chat → Kokoro TTS (en+zh) → ALSA via TAS5805M → speaker.**
 
+**Packaging reality on JP5 (review D11).** GPU wheels are **cp38-only** (final: torch 2.1.0, onnxruntime-gpu 1.16.x — mirror them now, Jetson Zoo is bot-walled), while `kokoro-onnx` needs **py≥3.10**. Resolution: whisper.cpp as C++/CUDA (`-DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=72`, pin a release that still builds on CUDA 11.4/gcc-9); **Kokoro on CPU ORT in a py3.10 venv** (82 M params — CPU suffices) or in a py3.10 jetson-container with GPU ORT; openWakeWord stays on py3.8 (semi-dormant upstream but functional; microWakeWord is ESP32-targeted — not applicable). **Optional cloud mode** behind a flag: `gpt-4o-mini-transcribe` (~$0.003/min) for STT and/or `gpt-realtime-2.1-mini` for full speech↔speech; the local pipeline remains the default/offline path.
+
 **Critical files (create)**
 
 - `/opt/cyberdog_voice/` — new ROS 2 node
@@ -453,12 +483,12 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 **Time: ~10 evenings (30 hrs).**
 
-**Risks.** TensorRT engine builds are pinned to specific TRT version (8.5 on r35.6.2). Network latency to OpenAI dominates UX — cache common responses.
+**Risks.** TensorRT engine builds are pinned to specific TRT version (8.5 on r35.6.4). Network latency to OpenAI dominates UX — cache common responses.
 
 ## 17. Phase 9 — Phone-app replacement
 
-- **Foxglove Studio** (browser + mobile) for visualization + control panels.
-- **rosbridge_suite** websocket bridge on the dog.
+- **Lichtblick** (browser + desktop; MPL-2.0, actively maintained BMW fork of Foxglove v1) for visualization + control panels. Foxglove Studio v2 is account-gated SaaS now — its free tier is the optional extra, not the foundation (review D12).
+- **foxglove_bridge** (`ros-humble-foxglove-bridge`, MIT, apt-installable) serving Lichtblick; **rosbridge_suite** for the custom web UI.
 - Thin custom web UI (React/Vite hosted on-dog via caddy) for one-tap actions: stand, sit, trick-1, trick-2.
 
 **Critical files**
@@ -482,7 +512,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 **On dog (JP4.5 side, read + minimal writes):**
 
-- `/boot/extlinux/extlinux.conf` — add `LABEL second`, keep `.pre-jp5` backup
+- `extlinux.conf` on the Phase 0.5-proven pivot filesystem (NVMe p1 *or* eMMC APP p1) — plus `extlinux.conf.{jp4,jp5}-saved` canonical copies
 - `/boot-jp5/{Image,initrd,dtb/tegra194-mi-k91.dtb}` — staged JP5 kernel (new dir on p1)
 - `/dev/nvme0n1p1` — shrunk via `resize2fs` + `parted`
 - `/dev/nvme0n1p2` — new JP5 rootfs
@@ -498,8 +528,8 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 **On x86 host (forks under user's GitHub):**
 
-- `<fork>/athena_l4t_sdk` branch `cyberdog-humble-r35.6.2`
-- `<fork>/athena_l4t_kernel/arch/arm64/configs/athena_defconfig` — synthesized from `/proc/config.gz`
+- `<fork>/athena_l4t_sdk` branch `cyberdog-humble-r35.6.4`
+- `<fork>/athena_l4t_kernel/arch/arm64/configs/athena_defconfig` — exists upstream; diff-verified against `/proc/config.gz`
 - `<fork>/athena_l4t_jakku_dts/tegra194-mi-k91.dts` — board DTB with Xiaomi sensor nodes
 - `<fork>/cyberdog_locomotion/` branch `humble-port`
 - `<fork>/cyberdog_ws/` branch `humble-aggregate` — meta-repo
@@ -507,7 +537,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 ## 20. Project-level verification
 
-1. **Dual-boot works.** `reboot` then select extlinux `primary` or `second` lands on JP4.5 or JP5 respectively; both fully functional.
+1. **Dual-boot works.** `cyberdog-boot-switch jp4|jp5` + `reboot` lands on JP4.5 or JP5 respectively (via the Phase 0.5-proven mechanism); both fully functional; a failed JP5 boot self-reverts via the initrd hook.
 2. **Walking.** JP5 side, `ros2 launch cyberdog_bringup locomotion.launch.py`; dog stands, trots in place, walks forward 2 m via gamepad teleop.
 3. **Sensors.** All 6 `/dev/video*` devices enumerate; BMI160 IMU publishes `/imu/data_raw` at ≥ 200 Hz; battery SOC publishes `/battery_state`.
 4. **Voice.** "Hey CyberDog, sit" → dog sits. OpenAI key never leaves `/etc/cyberdog/llm.env`.
@@ -518,19 +548,23 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 ## 21. Git strategy
 
 - Fork all four `athena_l4t_*` repos + all `MiRoboticsLab/*` repos under user's GitHub.
-- Per repo: branch `cyberdog-humble-r35.6.2` off zbwu's `athena_l4t-r35.1` (or upstream `main` for MiRoboticsLab).
-- Cherry-pick zbwu's deltas as `git format-patch` onto r35.6.2 base.
+- Per repo: branch `cyberdog-humble-r35.6.4` off zbwu's `athena_l4t-r35.1` (or upstream `main` for MiRoboticsLab).
+- Cherry-pick zbwu's deltas as `git format-patch` onto r35.6.4 base.
 - Each repo has `patches/` directory documenting every non-upstream commit with rationale.
 - Tag known-good states: `v0.1-phase2-dualboot`, `v0.2-phase4-first-boot`, `v0.3-phase5-motors`, `v0.4-phase6-walking`, `v1.0-full`.
 - Push to private-backup mirror weekly.
-- Upstream PRs back to zbwu for `athena_defconfig` synthesis (good-citizen move).
+- Upstream PRs back to zbwu: the r35.6.4 rebase + the audio-codec port (good-citizen move — closes his README's "mic array/speaker not supported" gap).
 
 ## 22. Open questions
 
-- Whether `libContentMotionAPI.so` is on the locomotion runtime path (determined in Phase 5 via symbol graph).
-- Whether the CyberDog bootloader honors extlinux `LABEL` selection (determined in Phase 0 non-destructive test — pivotal).
-- Whether r35.6.2 has breaking camera driver ABI changes vs r35.1 (determined in Phase 3).
-- Whether OpenAI's streaming latency to Xavier NX's Wi-Fi is acceptable for conversational UX (determined in Phase 8 — fallback is local whisper + shorter cached responses).
+- Which extlinux.conf does cboot read (NVMe p1 vs eMMC APP p1), and does `DEFAULT` work in the live one? (Phase 0.5 — decides Phase 2's switching mechanism.)
+- Does cboot load DTBs from `FDT` file lines? (Phase 0.5 model-string test — decides whether JP4/JP5 can pair kernels with their own DTBs.)
+- How hard is the `rt5680`/`tas5805m` ASoC forward-port 4.9 → 5.10? (Early Phase 3 scoping.)
+- What powers the MCU USB links on/off, and what is the `192.168.55.233` "R-domain"? (JP4-side capture before Phase 2 — review D7.)
+- Whether r35.6.4 has breaking camera-driver ABI changes vs zbwu's r35.1 baseline (determined in Phase 3 rebase).
+- Whether OpenAI streaming latency over Wi-Fi is acceptable for conversational UX (Phase 8 — local pipeline is the fallback).
+- ~~Whether `libContentMotionAPI.so` is on the locomotion runtime path~~ — **resolved** (Phase 0 forensics: no; locomotion is open-path).
+- ~~Whether the bootloader honors extlinux LABEL selection~~ — **superseded** by the confound finding (review §2.3).
 
 ## 23. References
 
@@ -545,8 +579,15 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 - [MiRoboticsLab/cyberdog_motor_sdk](https://github.com/MiRoboticsLab/cyberdog_motor_sdk)
 - [MiRoboticsLab/cyberdog_locomotion](https://github.com/MiRoboticsLab/cyberdog_locomotion) — gait controller
 - [MiRoboticsLab/cyberdog_ws](https://github.com/MiRoboticsLab/cyberdog_ws) — aggregator meta-repo
-- [NVIDIA Jetson Linux r35.6.2 archive](https://developer.nvidia.com/embedded/jetson-linux-archive)
+- [NVIDIA Jetson Linux r35.6.4 archive](https://developer.nvidia.com/embedded/jetson-linux-archive)
 - [NVIDIA forum: Xavier NX from CyberDog reflash](https://forums.developer.nvidia.com/t/jetson-xavier-nx-from-cyberdog-reflash/328632)
 - [Xiaomi CyberDog original white paper / Register coverage](https://www.theregister.com/2021/12/03/ubuntu_cyberdog/)
-- [openWakeWord](https://github.com/dscripka/openWakeWord) · [whisper.cpp](https://github.com/ggml-org/whisper.cpp) · [whisper_trt (NVIDIA-AI-IOT)](https://github.com/NVIDIA-AI-IOT/whisper_trt) · [Kokoro TTS](https://github.com/nazdridoy/kokoro-tts)
-- [Foxglove Studio](https://github.com/foxglove/studio) · [rosbridge_suite](https://github.com/RobotWebTools/rosbridge_suite)
+- [openWakeWord](https://github.com/dscripka/openWakeWord) · [whisper.cpp](https://github.com/ggml-org/whisper.cpp) · [whisper_trt (NVIDIA-AI-IOT)](https://github.com/NVIDIA-AI-IOT/whisper_trt) · [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)
+- [Lichtblick](https://github.com/Lichtblick-Suite/lichtblick) · [foxglove_bridge](https://github.com/foxglove/ros-foxglove-bridge) · [rosbridge_suite](https://github.com/RobotWebTools/rosbridge_suite)
+- **Added by the 2026-07-07 review:**
+  - [PLAN_REVIEW_2026-07-07.md](./PLAN_REVIEW_2026-07-07.md) — this plan's review + rationale for every delta
+  - [MiRoboticsLab/cyberdog_tegra_kernel](https://github.com/MiRoboticsLab/cyberdog_tegra_kernel) — stock 4.9 kernel source (audio codecs + mi-k91 DT)
+  - [MiRoboticsLab/cyberdog_ros2 discussion #133](https://github.com/MiRoboticsLab/cyberdog_ros2/discussions/133) — official V1.0.0.94/.82/.66 firmware URLs
+  - [JetPack 5 EOL notice (Q3 2026)](https://forums.developer.nvidia.com/t/jetpack-5-upcoming-end-of-life-notice/357716) · [JetPack 5.1.6 / L4T r35.6.4 release](https://forums.developer.nvidia.com/t/jetpack-5-1-6-l4t-35-6-4-is-now-live/359618) · [Jetson Linux r35.6.4](https://developer.nvidia.com/embedded/jetson-linux-r3564)
+  - [morrownr/8821cu](https://github.com/morrownr/8821cu-20210916) — RTL8821CU out-of-tree Wi-Fi driver
+  - [NVIDIA forum: bricked CyberDog reflash attempt, 2025](https://forums.developer.nvidia.com/t/jetson-xavier-nx-from-cyberdog-reflash/328632) — cautionary tale

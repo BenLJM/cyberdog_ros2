@@ -37,8 +37,9 @@ If neither path works and the eMMC bootloader is fully dead, the only remaining 
 | `/params` factory calibration wiped | Layer 0 `params-emmc-p12.img` → `dd` back onto `/dev/mmcblk0p12` | 2 min |
 | Wi-Fi creds lost | Layer 0 `wifi-creds.tar.gz` → extract to `/etc/NetworkManager/system-connections/` | 1 min |
 | eMMC kernel / DTB partition corrupted | Layer 3 `emmc-parts/p{02..09,14}.img` + USB force-recovery + NVIDIA flash tool | 45 min |
-| eMMC bootloader / GPT corrupted | Layer 3 `emmc-full.img.zst` + `gpt.bin` + USB force-recovery | 1 hr |
-| Totally bricked (eMMC + NVMe both lost) | Layer 4 factory-reset path (see §5) | 2–3 hrs |
+| eMMC GPT corrupted | Layer 3 `emmc-full.img.zst` + `gpt.bin` + USB force-recovery | 1 hr |
+| **QSPI bootloader (MB1/MB2/cboot/BCT) corrupted** | **Layer 3b `qspi-mtdblock0.img`** (exact current state — added 2026-07-07, review §2.2) + USB force-recovery + flash tools. Preferred over any factory reflash: no version/ratchet questions | 1 hr |
+| Totally bricked (eMMC + NVMe both lost) | Layer 4 factory-reset path (see §5) — **now with the exact V1.0.0.94 image** | 2–3 hrs |
 
 ## 3. Rootfs restore from Layer 2 tar
 
@@ -118,7 +119,7 @@ cd ..
 sudo ./apply_binaries.sh
 ```
 
-**Xiaomi flashall bundle.** As of 2026-05-16, V1.0.0.94 (the version on this dog, dated 2022.01.14) is **not publicly mirrored** — the Xiaomi CDN bucket requires the exact build-hash suffix and the partner GitLab is auth-walled. Public CDN serves the older V1.0.0.66 baseline; that's our Layer 4 fallback:
+**Xiaomi flashall bundle.** ~~As of 2026-05-16, V1.0.0.94 is not publicly mirrored~~ — **superseded 2026-07-07: V1.0.0.94 IS publicly downloadable** (hash suffix published in MiRoboticsLab discussion #133; see `PHASE0_LAYER4_RUNBOOK.md` §3). **Factory reset is now simply the V1.0.0.94 `flashall.sh`** — byte-exact for this dog. The V1.0.0.66 procedure below is retained ONLY as the fallback of last resort (e.g., CDN dies before the download happens):
 
 ```bash
 cd /media/backup/cyberdog-2026-04/layer4/
@@ -211,6 +212,12 @@ rm /tmp/rescue-test.img
 Success criterion: chroot prints `Ubuntu 18.04.6 LTS` and lists the `athena-*` packages. If this works, the backup is proven restorable.
 
 ## 7. Non-destructive `LABEL second` extlinux test (brick-risk mitigation)
+
+> **2026-07-07: SUPERSEDED by Phase 0.5** (review D2). This test was run on
+> 2026-04-25 with negative results — but it edited only the NVMe copy of
+> `extlinux.conf`, and a second copy on eMMC APP p1 may be the one cboot reads
+> (`PLAN_REVIEW_2026-07-07.md` §2.3). Use the Phase 0.5 marker-bootarg +
+> FDT-model-string procedure instead of the below.
 
 This must pass before Phase 2 partition surgery is attempted. The whole NVMe dual-rootfs plan depends on CyberDog's cboot honoring extlinux label selection.
 

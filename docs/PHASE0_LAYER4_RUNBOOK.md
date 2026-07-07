@@ -3,14 +3,19 @@
 Self-contained x86 host runbook. Run on the **Ubuntu 22.04 PC** (per project constraints). When complete, Phase 0 is done and Phase 1 (x86 dev env build-out) can start.
 
 > **State as of 2026-05-16.** All public URLs in this document were verified live by `WebFetch` 302/HEAD probes. Re-verify before starting if more than ~3 months have passed — NVIDIA archive mirrors have moved before, and Xiaomi's CDN bucket policy could change.
+>
+> **Update 2026-07-07 (see `PLAN_REVIEW_2026-07-07.md`).** All URLs re-verified live. Three changes: (1) **V1.0.0.94 — the dog's exact firmware — IS publicly downloadable** (§3; the May "not publicly mirrored" conclusion was wrong); (2) **JetPack 5 EOL is Q3 2026** → new §2b mirrors the r35.6.4 target artifacts NOW; (3) new §4c replicates the **Layer 3b QSPI/bootloader dumps** captured on-dog 2026-07-07. V1.0.0.66 is 5.08 GB, not 3 GB.
 
 ## 0. What this runbook produces
 
 | Path on backup SSD | Origin | Approx size | Purpose |
 |---|---|---|---|
 | `cyberdog-2026-04/layer4/jp4.5.1-bsp/Linux_for_Tegra/` | NVIDIA (public) | ~5 GB | Base BSP for any reflash; also Phase 3 starting point |
-| `cyberdog-2026-04/layer4/athena_foxy_*_V1.0.0.66*/` | Xiaomi CDN (public V1.0.0.66) | ~3 GB | `flashall.sh` factory baseline — only fallback Xiaomi publishes |
-| `cyberdog-2026-04/layer4b-v94-bl/{t18x,t19x}/` | dog `/opt/ota_package/` (private) | ~135 MB | V1.0.0.94 bootloader payloads to upgrade post-flash |
+| `cyberdog-2026-04/layer4/athena_foxy_2022.01.14_*_V1.0.0.94_*.tgz` | Xiaomi CDN (public — see §3) | **5.06 GB** | **EXACT stock firmware** — primary factory-reset path |
+| `cyberdog-2026-04/layer4/athena_foxy_2021.08.24_*_V1.0.0.66_*.tgz` | Xiaomi CDN (public) | 5.08 GB | Secondary baseline (kept for redundancy) |
+| `cyberdog-2026-04/layer4b-v94-bl/{t18x,t19x}/` | dog `/opt/ota_package/` (private) | ~135 MB | V1.0.0.94 bootloader OTA payloads (no longer load-bearing now that the full V1.0.0.94 tgz is in hand, but cheap — still capture) |
+| `cyberdog-2026-04/layer3b/` | dog `~/cyberdog-forensics-2026-04-22/qspi-boot-dump-2026-07-07/` | 40 MB | **QSPI NOR (32 MiB) + eMMC boot0/1** — the real bootloader home; exact-state brick recovery (§4c) |
+| `cyberdog-2026-04/jp5-mirror/` | NVIDIA (public, **EOL Q3 2026**) | ~13 GB | r35.6.4 (+r32.5.2 already in layer4) BSP/rootfs/sources + apt snapshot + cp38 wheels (§2b) |
 | `cyberdog-2026-04/layer4/RESCUE_DRILL_RESULT.txt` | rescue drill output | <1 KB | Proof that Layer 2 is restorable end-to-end |
 
 After this runbook, the only way to brick the dog without recovery is total physical destruction or losing the backup SSD.
@@ -68,22 +73,62 @@ sudo ./apply_binaries.sh                                # ~5 min
 
 (`wget --content-disposition` follows the 302 and saves with the canonical capitalised filename `Jetson_Linux_R32.5.2_aarch64.tbz2` etc. — adjust the unpack lines if your wget version names them differently.)
 
-## 3. Layer 4 download — Xiaomi V1.0.0.66 baseline flashall
+## 2b. Mirror-now — JP5 target artifacts (⚠️ JetPack 5 EOL Q3 2026)
+
+Everything the port depends on, downloaded while NVIDIA still serves it anonymously
+(all URLs verified 200 OK on 2026-07-07):
+
+```bash
+mkdir -p /media/backup/cyberdog-2026-04/jp5-mirror && cd $_
+
+# Jetson Linux r35.6.4 (JetPack 5.1.6 — the FINAL release for Xavier NX)
+wget https://developer.nvidia.com/downloads/embedded/l4t/r35_release_v6.4/release/jetson_linux_r35.6.4_aarch64.tbz2
+wget https://developer.nvidia.com/downloads/embedded/l4t/r35_release_v6.4/release/tegra_linux_sample-root-filesystem_r35.6.4_aarch64.tbz2
+wget https://developer.nvidia.com/downloads/embedded/l4t/r35_release_v6.4/sources/public_sources.tbz2
+
+# JetPack apt repo snapshot (CUDA/TensorRT/etc. debs for r35.6)
+# NOTE: sample-rootfs r35.6.2 URL quirk if ever needed: it has NO /release/ segment.
+apt-mirror-or-wget-r repo.download.nvidia.com/jetson/{common,t194}/dists/r35.6   # ~see review §3.1
+
+# Final JP5 python wheels (cp38; Jetson Zoo is bot-walled now)
+wget 'https://developer.download.nvidia.com/compute/redist/jp/v512/pytorch/torch-2.1.0a0+41361538.nv23.06-cp38-cp38-linux_aarch64.whl'
+# onnxruntime-gpu 1.16.x cp38: github.com/ykawa2/onnxruntime-gpu-for-jetson releases
+
+sha256sum * | tee SHA256SUMS
+```
+
+Also `git clone --mirror`: `zbwu/athena_l4t_{sdk,kernel,nvidia,jakku_dts}`,
+`MiRoboticsLab/cyberdog_tegra_kernel`, `MiRoboticsLab/cyberdog_{locomotion,motor_sdk,ros2,ws}`,
+`morrownr/8821cu-20210916`.
+
+## 3. Layer 4 download — Xiaomi factory firmware (V1.0.0.94 primary)
+
+**2026-07-07: the exact stock firmware IS publicly served.** The build-hash suffixes
+were published by the official `mi-CyberDog` account in
+[MiRoboticsLab/cyberdog_ros2 discussion #133](https://github.com/MiRoboticsLab/cyberdog_ros2/discussions/133);
+HEAD-verified 200 OK tonight:
 
 ```bash
 cd /media/backup/cyberdog-2026-04/layer4/
 
-# This is the only publicly-mirrored Xiaomi factory bundle.
-# V1.0.0.94 (the version on the dog) needs the build-hash suffix that we
-# don't have publicly; we recover its userspace from Layer 1 + Layer 0 instead.
+# PRIMARY: V1.0.0.94 (2022.01.14) — byte-exact match for this dog's firmware, 5.06 GB
+wget http://cdn.cnbj2m.fds.api.mi-img.com/cyberdog-package/build/athena_foxy_2022.01.14_emmc_nvme_V1.0.0.94_release_b1b4a851ca.tgz
+md5sum athena_foxy_2022.01.14_*.tgz    # expect b1b4a851ca59c19956b0039de316ee41
+
+# SECONDARY: V1.0.0.66 (2021.08.24) baseline, 5.08 GB — redundancy is cheap
 wget https://cdn.cnbj2m.fds.api.mi-img.com/cyberdog-package/build/athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66.20210824_release_bbcc37a86a.tgz
+# (V1.0.0.82 2021.09.26 also exists: ..._V1.0.0.82_release_45bed14190.tgz)
 
 sha256sum athena_foxy_*.tgz | tee -a SHA256SUMS
-tar xzf athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66.20210824_release_bbcc37a86a.tgz
-ls athena_foxy_2021.08.24_emmc_nvme_V1.0.0.66*/flashall.sh   # verify present
+tar xzf athena_foxy_2022.01.14_emmc_nvme_V1.0.0.94_release_b1b4a851ca.tgz
+ls athena_foxy_2022.01.14*/flashall.sh   # verify present
 ```
 
-If the download is dead by the time you run this, the most likely backup mirror is one of the community archives — search `MAVProxyUser` and `cyber-zoo` GitHub orgs for the filename. Failing that, the NVIDIA `flash.sh` from the BSP can produce a generic Xavier NX system, but it loses Xiaomi's `tegra194-mi-k91` device-tree blobs and partition layout — recovery would require a Phase 3 custom BSP build, which is much more work.
+With V1.0.0.94 in hand, the old recovery contortion ("V1.0.0.66 factory flash +
+Layer 1 userspace restore + Layer 4b BL re-apply") is **retired as primary path** —
+factory reset is simply the V1.0.0.94 `flashall.sh`. Keep the old procedure in
+`PHASE0_RECOVERY_PROCEDURES.md` as the fallback of last resort should the CDN die
+before you download (it has survived 4.5 years; do not test that luck — download tonight).
 
 ## 4. Layer 4b — capture V1.0.0.94 BL payloads (run on the dog, not the x86 host)
 
@@ -105,6 +150,24 @@ Approximate sizes:
 - `t19x/xusb_only_payload` ~125 KB
 - `t18x/bl_update_payload` ~12 MB
 - `t18x/bl_only_payload` ~9 MB
+
+## 4c. Layer 3b — replicate the QSPI/bootloader dumps (run on the dog, same SSD session)
+
+Captured on-dog 2026-07-07 (review §2.2): the bootloader (MB1/MB2/cboot/BCT) lives on
+**QSPI NOR** (`/dev/mtdblock0`), which Layers 0–4 never covered. Replicate the dumps:
+
+```bash
+mkdir -p /mnt/backup/cyberdog-2026-04/layer3b
+cp -av ~/cyberdog-forensics-2026-04-22/qspi-boot-dump-2026-07-07/* \
+      /mnt/backup/cyberdog-2026-04/layer3b/
+( cd /mnt/backup/cyberdog-2026-04/layer3b && sha256sum -c SHA256SUMS )
+sync
+```
+
+Expected: `qspi-mtdblock0.img` (32 MiB, sha256 `9820ec…`), `emmc-boot0.img` =
+`emmc-boot1.img` (4 MiB, sha256 `bb9f8d…`). This is the *exact-state* bootloader
+restore source — preferred over any factory-version reflash for "bootloader
+corrupted" scenarios (no version/ratchet questions).
 
 Move the SSD back to the x86 host before Section 5.
 
@@ -191,12 +254,15 @@ done
 Before tagging `v0.1-phase0-complete` and starting Phase 1:
 
 - [ ] Layer 4 BSP unpacked, `apply_binaries.sh` ran clean
-- [ ] Layer 4 V1.0.0.66 flashall bundle present, `flashall.sh` is `+x`
+- [ ] **Layer 4 V1.0.0.94 downloaded, MD5 = `b1b4a851ca59c19956b0039de316ee41`, `flashall.sh` is `+x`** (V1.0.0.66 as secondary)
+- [ ] **§2b jp5-mirror complete: r35.6.4 trio + apt snapshot + cp38 wheels + repo mirrors** (⚠️ JP5 EOL Q3 2026)
 - [ ] Layer 4b BL payloads copied, SHA256SUMS validated
+- [ ] **Layer 3b QSPI/boot0/1 dumps replicated to SSD, SHA256SUMS validated (§4c)**
 - [ ] `RESCUE_DRILL_RESULT.txt` shows `Ubuntu 18.04.6 LTS` + `1.0.0.94`
-- [ ] Backup-of-backup completed, both copies verified
-- [ ] PHASE0_BOOT_MECHANISM_FINDINGS.md `LABEL second` test result captured (already done 2026-04-25 — JP4↔JP5 switching is edit-in-place only)
+- [ ] Backup-of-backup completed, both copies verified (now incl. layer3b + jp5-mirror + V1.0.0.94)
+- [ ] MCU power-gating capture done on the JP4 side (review D7) — udev + GPIO trace while triggering motion
 - [ ] Tag commit on `docs/jetpack5-humble-port`: `git tag v0.1-phase0-complete && git push --tags`
+- [ ] **Then run Phase 0.5 (boot-path disambiguation — review D2) before any Phase 2 work**
 
 ## 8. What's next (Phase 1 preview)
 

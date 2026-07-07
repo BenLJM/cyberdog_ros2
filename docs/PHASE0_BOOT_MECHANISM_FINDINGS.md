@@ -1,8 +1,21 @@
 # Phase 0 — CyberDog boot mechanism findings (2026-04-25)
 
-Empirical results from non-destructive boot tests on the live `k91` board.
-These findings invalidate the original Phase 2 dual-rootfs plan that relied
-on extlinux `LABEL` selection and force a redesign to **edit-in-place**.
+> ⚠️ **CONFOUND DISCOVERED 2026-07-07 — conclusions below are UNSAFE to build on
+> until re-tested.** The eMMC APP partition (`/dev/mmcblk0p1`) contains a second
+> `/boot` island with its own `extlinux.conf`, textually identical to the NVMe
+> copy (`PLAN_REVIEW_2026-07-07.md` §2.3). Every test below edited only the
+> **NVMe** copy, and both copies' `LABEL primary` APPEND lines are identical — so
+> "primary's APPEND landed in cmdline" cannot tell which file cboot read. The
+> negative results (menu doesn't render, `DEFAULT` ignored) have an untested
+> alternative explanation: *cboot read the eMMC copy, which was never edited.*
+> Also newly relevant: `LABEL primary` has **no `LINUX` line** — the kernel
+> actually loads from the eMMC kernel partition (p2, NVDA-wrapped image), so
+> kernel/DTB **file** loading is unproven on this cboot too.
+> **Re-test procedure: review D2 ("Phase 0.5") — marker bootargs on each copy in
+> turn, then a model-string FDT-file test.** Update this file with v2 results.
+> (Silver lining: `nvbootctrl` slot findings in Test 3 are NOT confounded —
+> `num_slots: 1` / "RootFS A/B not enabled" came from the boot-control HAL
+> itself, independent of which extlinux file was read.)
 
 ## Tests performed
 
