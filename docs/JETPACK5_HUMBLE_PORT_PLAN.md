@@ -316,8 +316,8 @@ On Ubuntu 22.04 host:
   - `CONFIG_SENSORS_INA3221=y` (current monitor)
   - `CONFIG_VL53L1X=y` (TOF) — confirm from live DTB
   - OV7251 / OV13B10 camera drivers — **already ported in zbwu's tree** (`nv_ov13b10.c`/`nv_ov7251.c`, `CONFIG_NV_VIDEO_OV13B10/OV7251=m`); rebase, don't rewrite
-  - `CONFIG_CAN_C_CAN_PLATFORM=y`, `CONFIG_CAN_RAW=y` (motor bus)
-  - Note: zbwu's defconfig uses generic `CONFIG_GPIO_PCA953X=y` for the TCA6424s (covers the tca64xx family) and HID-sensor-hub configs alongside the BMI160 sources — verify the IMU path empirically in Phase 5
+  - **`CONFIG_CAN_RAW=y` + `CAN_DEV`/`CAN_BCM`/`CAN_GW` (motor bus)** — ⚠️ **caught 2026-07-08: zbwu's defconfig has only `CONFIG_CAN=y` + `MTTCAN=y`, NOT `CAN_RAW`.** The motor SDK uses raw SocketCAN; without this the bus is silent in Phase 5. Cheap fix, add explicitly. `MTTCAN` (Tegra CAN IP) is already present. See [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §1.
+  - Note: zbwu's defconfig uses generic `CONFIG_GPIO_PCA953X=y` for the TCA6424s (covers the tca64xx family) and HID-sensor-hub configs alongside the BMI160 sources — verify the IMU path empirically in Phase 5. **BMI160 CONFIG is absent from zbwu's defconfig (sources present) — enable it.**
 - **NEW — audio codec forward-port (the critical path to Phase 8):** `rt5680` + `tas5805m` from `cyberdog_tegra_kernel` (4.9) → 5.10 ASoC, plus re-authoring the `tegra194-mi-k91-audio.dtsi` nodes onto zbwu's p3668-based DTS (review D5). **Scoped 2026-07-08 — see [PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md): MEDIUM-LOW risk, ~7–12 evenings; standard codec→component conversion (rt5659.c as template) + tegra-alt→audio-graph DT rewrite; upstream v6.1 tas5805m verified as backport alternative. Unknown #3 is bounded.**
 - **NEW — `rtl8821cu` out-of-tree Wi-Fi module** (`morrownr/8821cu-20210916`): stock Wi-Fi is USB RTL8821CU with no in-tree 5.10 driver (review §2.6). Plus `rtl8821c` BT firmware from linux-firmware into the rootfs.
 - **NEW — auto-revert initrd hook:** on root-mount failure, mount the boot-pivot FS, restore `extlinux.conf` from the jp4-saved copy (atomic `rename(2)`), `sync`, `reboot -f`; plus `panic=15` in APPEND. Converts the most likely Phase 4 failure from a 30-min USB rescue into a self-healing reboot (review D5). Rehearse deliberately in Phase 4.
@@ -423,7 +423,7 @@ On Ubuntu 22.04 host:
 | `libathena_touch_core.so` | **Copy-forward** | Small surface; touch-sensor glue worth preserving |
 | `libapp_server_core.a` | **Drop** | Phone app replaced by Foxglove in Phase 9 |
 
-Glibc forward-compat: `ldd --version` on 18.04 (2.27) vs 20.04 (2.31). Most cases work. Verify each with `readelf -V` versioned-symbol check in JP5 chroot.
+Glibc forward-compat: **verified 2026-07-08** (not just assumed) — `objdump -T` on the closed libs shows max requirements `libathena_utils_core.so` GLIBC 2.17 / GLIBCXX 3.4.21, `libathena_touch_core.so` GLIBC 2.17, `libContentMotionAPI.so` GLIBC 2.27 — all ≪ focal's GLIBC 2.31 / GLIBCXX 3.4.28. **Copy-forward is safe**; the Phase 5 `readelf -V` chroot check is now just final confirmation. See [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §2.
 
 **Time: ~25–30 evenings (75–90 hrs).**
 
@@ -439,13 +439,16 @@ Glibc forward-compat: `ldd --version` on 18.04 (2.27) vs 20.04 (2.31). Most case
 
 **Most of the Galactic→Humble port itself happens off-device in Track S** (Phase 1, review D8): ported + walking in `cyberdog_simulator` on x86 before this phase starts. Phase 6 deploys and integrates that result on the dog.
 
-**Critical files to port**
+> **Re-scoped 2026-07-08** ([PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §3): `cyberdog_locomotion` is **LCM-based, not ROS** — 949 LCM refs vs 7 rclcpp refs, and all 7 are in `CMakeLists.txt`/`package.xml`, none in source. It's a self-contained MIT-Cheetah control binary. `cyberdog_motor_sdk` has **zero** ROS coupling (pure CAN). **The Galactic→Humble work is NOT in locomotion** — it's in `cyberdog_ros2`'s LCM↔ROS bridge: `cyberdog_decision/decision_maker/motion_manager.{hpp,cpp}` + `cyberdog_interfaces/lcm_translate_msgs/`. Port budget shifts there; the locomotion binary just needs to build on 20.04 (LCM is distro-agnostic).
 
-- `cyberdog_locomotion/src/fsm/FSM_State.cpp` + siblings — Galactic → Humble API shifts.
-- `cyberdog_locomotion/launch/*.launch.py` — composable-node API tweaks.
-- `cyberdog_motor_sdk` CAN backend — already C++, minimal ROS 2 coupling.
+**Critical files to port (corrected target):**
 
-**Galactic → Humble port surface:** `rclcpp` parameter API (typed declarations now required), message header namespace moves, launch composable-node syntax. Budget ~10 evenings for the port alone.
+- `cyberdog_ros2` `cyberdog_decision/decision_maker/motion_manager.cpp` — the real rclcpp coupling; Galactic → Humble API shifts.
+- `cyberdog_interfaces/lcm_translate_msgs/` — LCM↔ROS translation (28 `.lcm` types); rebuild against Humble.
+- `cyberdog_locomotion` — build the LCM binary on 20.04 as-is; no source-level ROS port. **Validate standalone via LCM loopback before any ROS stack exists** (Track S can walk-in-sim with just LCM + `simbridge`).
+- `cyberdog_motor_sdk` CAN backend — pure C++/CAN, no ROS port.
+
+**Galactic → Humble port surface (now confined to the decision layer):** `rclcpp` parameter API (typed declarations now required), message header namespace moves, launch composable-node syntax. Budget ~8 evenings, down from ~10 — locomotion itself is off the port path.
 
 **Restore `/params`:** loopback-mount `layer0/params-emmc-p12.img`, copy camera intrinsics + extrinsics, IMU biases, audio EQ into expected paths on JP5 rootfs.
 
@@ -563,7 +566,9 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 - What powers the MCU USB links on/off, and what is the `192.168.55.233` "R-domain"? (JP4-side capture before Phase 2 — review D7.)
 - Whether r35.6.4 has breaking camera-driver ABI changes vs zbwu's r35.1 baseline (determined in Phase 3 rebase).
 - Whether OpenAI streaming latency over Wi-Fi is acceptable for conversational UX (Phase 8 — local pipeline is the fallback).
-- ~~Whether `libContentMotionAPI.so` is on the locomotion runtime path~~ — **resolved** (Phase 0 forensics: no; locomotion is open-path).
+- ~~Whether `libContentMotionAPI.so` is on the locomotion runtime path~~ — **resolved** (Phase 0 forensics: no; locomotion is open-path). Further confirmed 2026-07-08: locomotion is LCM/C++, links no closed libs.
+- ~~Whether the keystone closed `.so` copies-forward to focal glibc~~ — **resolved 2026-07-08**: yes, all required symbol versions ≪ focal's.
+- ~~Locomotion Galactic→Humble port difficulty~~ — **resolved 2026-07-08**: locomotion is LCM-based (not ROS); the real port surface is `cyberdog_ros2`'s decision/bridge layer.
 - ~~Whether the bootloader honors extlinux LABEL selection~~ — **superseded** by the confound finding (review §2.3).
 
 ## 23. References
