@@ -23,6 +23,14 @@ Consumed by: `athena_body_state`, `athena_camera/maincamera`, `athena_decisionma
 
 The fact this library has **zero cloud endpoints** means it's pure-local utility/helper code. Copy-forward across glibc 2.27→2.31 is the expected path. Verify with `readelf -V` versioned-symbol check in a JP5 chroot during Phase 5.
 
+> **Correction 2026-07-09.** "Zero cloud endpoints / pure-local" was about *network*
+> behavior and is correct — but it does **not** make this lib a clean copy-forward.
+> A NEEDED audit shows `libathena_utils_core.so` links **ROS 2 Foxy** ABI
+> (`librclcpp`, `librcl`, `librclcpp_lifecycle`), which breaks against Humble. glibc
+> is fine; the ROS ABI is the gate. See
+> [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md)
+> §2 for the corrected analysis and the keystone-disposition options.
+
 ### Clean-path insight for locomotion
 
 Walking depends on `chassis_node`, `cyberdog_motor_sdk`, `cyberdog_locomotion`. None of these link any closed `lib*audio*`, `libaivs_sdk`, `libbody_detect_api`, `libContentMotionAPI`. **Locomotion is open-path** — no reverse-engineering required to walk the dog on Humble.

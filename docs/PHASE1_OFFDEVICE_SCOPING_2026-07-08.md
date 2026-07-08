@@ -40,22 +40,64 @@ userspace** (newly caught tonight; would have surfaced as "motors don't respond"
 Phase 5). Add both to the fork's defconfig before the first Phase 3 build. Working
 copies: `~/cyberdog-scoping/{athena_defconfig.r35.1,live-4.9.config,zbwu-set.config}`.
 
-## 2. Closed-`.so` glibc forward-compat pre-check (was deferred to Phase 5)
+## 2. Closed-`.so` forward-compat — glibc AND ROS ABI (corrected 2026-07-09)
 
-Ran `objdump -T` for the max symbol versions each keystone closed lib requires.
-Target focal provides **glibc 2.31** and **libstdc++ GLIBCXX_3.4.28 / CXXABI_1.3.11**.
+> **Self-correction.** The first version of this section checked only glibc symbol
+> versions and declared the keystone "copy-forward safe." That was the wrong layer.
+> glibc is the *least* likely thing to break (it's strongly backward-compatible);
+> the real question is the **ROS 2 ABI** each closed lib links against. Re-audited
+> below with `readelf -d` NEEDED.
 
-| Closed lib | Max GLIBC | Max GLIBCXX | Max CXXABI | Copy-forward to focal? |
-|---|---|---|---|---|
-| `libathena_utils_core.so` (keystone, 20+ consumers) | 2.17 | 3.4.21 | 1.3.x | ✅ **SAFE** (needs ≤ 2.17 / 3.4.21 ≪ focal's 2.31 / 3.4.28) |
-| `libathena_touch_core.so` | 2.17 | 3.4 | 1.3.8 | ✅ **SAFE** |
-| `libContentMotionAPI.so` | 2.27 | 3.4.21 | — | ✅ SAFE (being dropped anyway) |
+**glibc layer (holds):** `objdump -T` maxes — keystone `libathena_utils_core.so`
+GLIBC 2.17 / GLIBCXX 3.4.21, `libathena_touch_core.so` 2.17, `libContentMotionAPI.so`
+2.27 — all ≪ focal's GLIBC 2.31 / GLIBCXX 3.4.28. So glibc is a non-issue. But that
+is necessary, not sufficient.
 
-**Result: the keystone copy-forward assumption is now positively verified, not just
-hoped.** All required symbol versions sit comfortably below focal's. The Phase 5
-`readelf -V` chroot check remains as final confirmation, but the risk is retired
-early — the minimum-viable walking dog's one hard closed-lib dependency
-(`libathena_utils_core.so`) will load on Ubuntu 20.04.
+**ROS-ABI layer (the real gate).** Full NEEDED audit of all 9 closed libs:
+
+| Closed lib | Links ROS? | Copy-forward verdict |
+|---|---|---|
+| `libathena_utils_core.so` **(keystone, 20+ consumers)** | **Foxy** (`librclcpp`, `librcl`, `librclcpp_lifecycle`) | ❌ **NOT a simple copy-forward** — needs Foxy rclcpp ABI; Humble breaks it |
+| `libaudio_assistant.so` | **Foxy** (`librclcpp`, `librcl`, …) | n/a — on the DROP list (Phase 8) |
+| `libaudio_interaction.so` | **Foxy** (`librcl_action`, `librclcpp_action`, `librclcpp_lifecycle`) | n/a — DROP |
+| `libaivs_sdk.so` | no ROS | DROP anyway (dead cloud) |
+| `libathena_touch_core.so` | no ROS | ✅ standalone — glibc-only, copy-forward OK |
+| `libaudio_base.so` / `libaudio_config.so` | no ROS | DROP (audio) |
+| `libbody_detect_api.so` | no ROS | REPLACE (YOLO) — standalone if ever needed |
+| `libContentMotionAPI.so` | no ROS | ✅ standalone (but dropped with body_detect) |
+
+**Counts: 6 standalone (glibc-only, genuinely copy-forwardable), 3 Foxy-ABI-bound.**
+
+**What this actually means:**
+- The **walking MVP is unaffected** — locomotion links *no* closed lib (Phase 0
+  forensics + §3 tonight), so the Foxy-ABI problem doesn't touch getting the dog to
+  stand/trot. The Phase-0 thesis "minimum-viable walking needs no closed code" still
+  holds.
+- Of the 3 Foxy-bound libs, **2 are already slated to DROP** (audio → Phase 8 voice
+  stack). Their Foxy binding is irrelevant.
+- The problem collapses to **exactly one library: the keystone
+  `libathena_utils_core.so`.** Its 20+ consumers (LED, touch, body_state,
+  decisionmaker, tracking, obstacle/scene detection, …) are the *non-locomotion*
+  behaviors. Reusing any of them on JP5 means solving the keystone's Foxy binding.
+
+**New decision point (was hidden by the earlier optimism):** how to handle the
+keystone.
+- **Option A — Foxy side-by-side runtime.** Install just Foxy's rclcpp/rcl runtime
+  `.so` alongside Humble (not the whole distro). The closed Foxy nodes + keystone run
+  as Foxy processes; they interoperate with Humble nodes **over DDS/topics** (both
+  RMW-on-DDS, so Foxy↔Humble talk at the wire level fine, even though in-process ABI
+  differs). Lowest-effort way to keep the closed behaviors. **Recommended default.**
+- **Option B — replace the consumers.** LED via direct TCA6424 GPIO, touch via the
+  standalone `libathena_touch_core.so` (no ROS!) behind a small Humble node, body
+  detection via YOLO (already planned). Drops the keystone entirely. More work, fully
+  open.
+- **Option C — defer.** Walking + voice + teleop need none of this; ship those first,
+  decide keystone disposition later.
+
+**Verify in Phase 5:** whether Foxy runtime `.so` load cleanly on the r35.6.4 rootfs
+(they should — glibc checks above pass), and whether the closed Foxy nodes DDS-interop
+with Humble nodes on the same graph. `readelf -V` chroot check as before, now with the
+correct expectation (glibc OK, ROS ABI = Foxy).
 
 ## 3. `cyberdog_locomotion` port surface — MAJOR re-scope
 
@@ -97,13 +139,44 @@ types mirrored on both sides).
 
 ---
 
+## 5. Phase 2 rescue-initrd — build materials confirmed on-dog (was "assumed")
+
+Phase 2 v3 (review D4) hinges on building a RAM rescue initrd. The plan asserted it
+was feasible; tonight confirmed **every ingredient is already on the dog**:
+
+- **`/bin/busybox`** present (1.6 MB, single binary) — the initrd shell/utils.
+- **Stock initrd is a working template** — gzip cpio with an `init` + busybox-style
+  utils; a proven L4T initramfs to fork from rather than build from scratch.
+- **`/opt/nvidia/l4t-usb-device-mode/`** present and complete: `nv-l4t-usb-device-mode-start.sh`
+  (11 KB configfs gadget bring-up), `filesystem.img` (16 MB FAT gadget), service
+  units. This is the exact RNDIS-192.168.55.1 **+ ttyGS0 serial-console** access path
+  the rescue initrd (and JP5 first-boot, D6) needs — lift it wholesale.
+- **`sshd`** present (openssh-server 7.6). Either embed it or swap for dropbear;
+  either fits an initramfs.
+
+**Verdict:** Phase 2's new scope carries no "can we even build this" risk — it's
+assembly of parts that already exist. Downgrades D4's biggest uncertainty.
+
+## 6. Phase 2 NVMe shrink — numbers verified (read-only)
+
+`resize2fs -P /dev/nvme0n1p1` (read-only estimate): **minimum 4,857,478 blocks ×
+4 KiB ≈ 18.5 GB**. Current: 35 GB used of 119 GB; 26.3 M free blocks. GPT is a single
+`APP` partition filling the disk (sectors 40 → 250066983; only 2,664 sectors free at
+tail).
+
+**Verdict:** the plan's target — shrink p1 to 50 GB, carve p2 (50 GB) + p3 (~17 GB) —
+is **comfortably feasible**: 50 GB is ~2.7× the 18.5 GB floor and well above the 35 GB
+in use, so the shrink has wide margin. Confirms Phase 2 geometry is sound before any
+surgery. (Actual shrink runs offline from the rescue initrd per D4; `resize2fs` here
+is 1.44.1, the focal-era version that will do the real resize too.)
+
 ## Net effect on the plan
 
 | Item | Before tonight | After |
 |---|---|---|
 | Audio port (unknown #3) | unscoped | bounded, medium-low, 7-12 ev (audio doc) |
 | Locomotion Humble port | ~20-25 ev, feared | **mostly a non-problem** — LCM binary; ROS work is in cyberdog_ros2 decision layer |
-| Keystone `.so` on focal | assumed OK | **verified OK** (glibc 2.17 ≪ 2.31) |
+| Keystone `.so` on focal | assumed copy-forward OK | **corrected**: glibc OK but it's Foxy-ABI-bound → needs Foxy side-by-side or consumer replacement (walking unaffected) |
 | defconfig gaps | audio only | audio **+ CAN_RAW/SocketCAN** (newly caught) |
 | 8821cu | plan-listed | build-ready, actively maintained |
 

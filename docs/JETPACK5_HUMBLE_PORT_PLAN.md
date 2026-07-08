@@ -286,7 +286,7 @@ On Ubuntu 22.04 host:
 
 **Sub-tasks**
 
-1. **Build + rehearse the RAM rescue initrd (2–3 evenings).** Busybox + dropbear + USB-gadget bring-up (RNDIS `192.168.55.1` **and** `ttyGS0` serial console — reuse the stock `/opt/nvidia/l4t-usb-device-mode` configfs script), booted from its own extlinux entry with the *stock JP4 kernel*, staying in initramfs (never mounts NVMe). Rehearse boot-in/SSH-in/boot-out twice. **This is permanent infrastructure:** several recovery-matrix rows drop from "forced-recovery + x86 host" to "boot rescue label, fix over SSH".
+1. **Build + rehearse the RAM rescue initrd (2–3 evenings).** Busybox + dropbear/sshd + USB-gadget bring-up (RNDIS `192.168.55.1` **and** `ttyGS0` serial console — reuse the stock `/opt/nvidia/l4t-usb-device-mode` configfs script), booted from its own extlinux entry with the *stock JP4 kernel*, staying in initramfs (never mounts NVMe). Rehearse boot-in/SSH-in/boot-out twice. **This is permanent infrastructure:** several recovery-matrix rows drop from "forced-recovery + x86 host" to "boot rescue label, fix over SSH". **Build materials all confirmed present on-dog 2026-07-09** (`/bin/busybox`, stock initrd template, complete `/opt/nvidia/l4t-usb-device-mode/`, `sshd`) — see [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §5; and the shrink geometry is numerically verified (§6: p1 floor ≈18.5 GB ≪ 50 GB target).
 2. **Offline surgery from the rescue environment (1 evening):** `e2fsck -f /dev/nvme0n1p1` → `resize2fs /dev/nvme0n1p1 45G` → `parted` shrink p1 to 50 GB → create p2 + p3 → `mkfs.ext4 -L JP5_ROOT /dev/nvme0n1p2`, `mkfs.ext4 -L DATA /dev/nvme0n1p3` → `resize2fs /dev/nvme0n1p1` (grow back into p1's final size) → reboot to JP4, verify untouched.
 3. **Boot-switch rehearsal with two identical JP4 kernels** (`/boot/Image` vs `/boot/Image.copy` + marker bootargs): implement `cyberdog-boot-switch jp4|jp5` against the Phase 0.5-proven pivot file, verify atomicity (`cp` to `.tmp` + `mv`) and that both paths boot, **before** any JP5 kernel exists.
 4. Record p1/p2/p3 UUIDs in `MANIFEST.yaml`; keep `extlinux.conf.{jp4,jp5}-saved` canonical copies next to the live one.
@@ -423,7 +423,7 @@ On Ubuntu 22.04 host:
 | `libathena_touch_core.so` | **Copy-forward** | Small surface; touch-sensor glue worth preserving |
 | `libapp_server_core.a` | **Drop** | Phone app replaced by Foxglove in Phase 9 |
 
-Glibc forward-compat: **verified 2026-07-08** (not just assumed) — `objdump -T` on the closed libs shows max requirements `libathena_utils_core.so` GLIBC 2.17 / GLIBCXX 3.4.21, `libathena_touch_core.so` GLIBC 2.17, `libContentMotionAPI.so` GLIBC 2.27 — all ≪ focal's GLIBC 2.31 / GLIBCXX 3.4.28. **Copy-forward is safe**; the Phase 5 `readelf -V` chroot check is now just final confirmation. See [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §2.
+Forward-compat has **two** layers (audited 2026-07-09 — [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §2): **glibc** (a non-issue — all closed libs need ≤ GLIBC 2.27 ≪ focal's 2.31) and **ROS ABI** (the real gate). Full NEEDED audit: **6 of 9 closed libs are standalone** (glibc-only → genuinely copy-forward), but **3 link Foxy's `librclcpp`/`librcl` ABI** — including the keystone `libathena_utils_core.so`. Foxy→Humble breaks rclcpp ABI, so those 3 do **not** simply copy-forward. Two of them are audio libs already on the DROP list; the problem collapses to the **one keystone**, whose disposition (Foxy side-by-side runtime over DDS, vs replacing its consumers) is a Phase 5 decision. **Walking is unaffected** — locomotion links no closed lib.
 
 **Time: ~25–30 evenings (75–90 hrs).**
 
@@ -567,7 +567,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 - Whether r35.6.4 has breaking camera-driver ABI changes vs zbwu's r35.1 baseline (determined in Phase 3 rebase).
 - Whether OpenAI streaming latency over Wi-Fi is acceptable for conversational UX (Phase 8 — local pipeline is the fallback).
 - ~~Whether `libContentMotionAPI.so` is on the locomotion runtime path~~ — **resolved** (Phase 0 forensics: no; locomotion is open-path). Further confirmed 2026-07-08: locomotion is LCM/C++, links no closed libs.
-- ~~Whether the keystone closed `.so` copies-forward to focal glibc~~ — **resolved 2026-07-08**: yes, all required symbol versions ≪ focal's.
+- Keystone `libathena_utils_core.so` disposition — **refined 2026-07-09**: glibc is fine, but it links **Foxy rclcpp ABI** (not copy-forward to a Humble-only system). Options: Foxy side-by-side runtime interoperating over DDS, or replace its 20+ consumers. Decide in Phase 5. (Walking doesn't need it.)
 - ~~Locomotion Galactic→Humble port difficulty~~ — **resolved 2026-07-08**: locomotion is LCM-based (not ROS); the real port surface is `cyberdog_ros2`'s decision/bridge layer.
 - ~~Whether the bootloader honors extlinux LABEL selection~~ — **superseded** by the confound finding (review §2.3).
 
