@@ -318,7 +318,7 @@ On Ubuntu 22.04 host:
   - OV7251 / OV13B10 camera drivers — **already ported in zbwu's tree** (`nv_ov13b10.c`/`nv_ov7251.c`, `CONFIG_NV_VIDEO_OV13B10/OV7251=m`); rebase, don't rewrite
   - `CONFIG_CAN_C_CAN_PLATFORM=y`, `CONFIG_CAN_RAW=y` (motor bus)
   - Note: zbwu's defconfig uses generic `CONFIG_GPIO_PCA953X=y` for the TCA6424s (covers the tca64xx family) and HID-sensor-hub configs alongside the BMI160 sources — verify the IMU path empirically in Phase 5
-- **NEW — audio codec forward-port (the critical path to Phase 8):** `rt5680` + `tas5805m` from `cyberdog_tegra_kernel` (4.9) → 5.10 ASoC, plus re-authoring the `tegra194-mi-k91-audio.dtsi` nodes onto zbwu's p3668-based DTS (review D5). Scope the ASoC API churn early; this is new unknown #3.
+- **NEW — audio codec forward-port (the critical path to Phase 8):** `rt5680` + `tas5805m` from `cyberdog_tegra_kernel` (4.9) → 5.10 ASoC, plus re-authoring the `tegra194-mi-k91-audio.dtsi` nodes onto zbwu's p3668-based DTS (review D5). **Scoped 2026-07-08 — see [PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md): MEDIUM-LOW risk, ~7–12 evenings; standard codec→component conversion (rt5659.c as template) + tegra-alt→audio-graph DT rewrite; upstream v6.1 tas5805m verified as backport alternative. Unknown #3 is bounded.**
 - **NEW — `rtl8821cu` out-of-tree Wi-Fi module** (`morrownr/8821cu-20210916`): stock Wi-Fi is USB RTL8821CU with no in-tree 5.10 driver (review §2.6). Plus `rtl8821c` BT firmware from linux-firmware into the rootfs.
 - **NEW — auto-revert initrd hook:** on root-mount failure, mount the boot-pivot FS, restore `extlinux.conf` from the jp4-saved copy (atomic `rename(2)`), `sync`, `reboot -f`; plus `panic=15` in APPEND. Converts the most likely Phase 4 failure from a 30-min USB rescue into a self-healing reboot (review D5). Rehearse deliberately in Phase 4.
 - **Optional, off critical path — PREEMPT_RT:** official on r35.x for Xavier NX (developer-preview): `./kernel-5.10/scripts/rt-patch.sh apply-patches`, rebuild nvdisplay against it (headless operation dodges the display risk). Only after locomotion is stable on the stock kernel (review §3.1).
@@ -559,7 +559,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 - Which extlinux.conf does cboot read (NVMe p1 vs eMMC APP p1), and does `DEFAULT` work in the live one? (Phase 0.5 — decides Phase 2's switching mechanism.)
 - Does cboot load DTBs from `FDT` file lines? (Phase 0.5 model-string test — decides whether JP4/JP5 can pair kernels with their own DTBs.)
-- How hard is the `rt5680`/`tas5805m` ASoC forward-port 4.9 → 5.10? (Early Phase 3 scoping.)
+- ~~How hard is the `rt5680`/`tas5805m` ASoC forward-port 4.9 → 5.10?~~ — **scoped 2026-07-08** ([PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md)): medium-low, ~7–12 evenings, no blocker candidates.
 - What powers the MCU USB links on/off, and what is the `192.168.55.233` "R-domain"? (JP4-side capture before Phase 2 — review D7.)
 - Whether r35.6.4 has breaking camera-driver ABI changes vs zbwu's r35.1 baseline (determined in Phase 3 rebase).
 - Whether OpenAI streaming latency over Wi-Fi is acceptable for conversational UX (Phase 8 — local pipeline is the fallback).
