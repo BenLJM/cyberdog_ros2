@@ -251,18 +251,20 @@ done
 
 ## 7. Phase 0 sign-off checklist
 
-Before tagging `v0.1-phase0-complete` and starting Phase 1:
+Before tagging `v0.1-phase0-complete` and starting Phase 1. **Progress 2026-07-09:**
+mirror + Layer 3b + Layer 4b now replicated to the SSD (`tools/replicate-to-ssd.sh`,
+all SHA256-verified); rescue drill run natively on-dog (`tools/rescue-drill-native.sh`).
 
-- [ ] Layer 4 BSP unpacked, `apply_binaries.sh` ran clean
-- [ ] **Layer 4 V1.0.0.94 downloaded, MD5 = `b1b4a851ca59c19956b0039de316ee41`, `flashall.sh` is `+x`** (V1.0.0.66 as secondary)
-- [ ] **§2b jp5-mirror complete: r35.6.4 trio + apt snapshot + cp38 wheels + repo mirrors** (⚠️ JP5 EOL Q3 2026)
-- [ ] Layer 4b BL payloads copied, SHA256SUMS validated
-- [ ] **Layer 3b QSPI/boot0/1 dumps replicated to SSD, SHA256SUMS validated (§4c)**
-- [ ] `RESCUE_DRILL_RESULT.txt` shows `Ubuntu 18.04.6 LTS` + `1.0.0.94`
-- [ ] Backup-of-backup completed, both copies verified (now incl. layer3b + jp5-mirror + V1.0.0.94)
-- [ ] MCU power-gating capture done on the JP4 side (review D7) — udev + GPIO trace while triggering motion
-- [ ] Tag commit on `docs/jetpack5-humble-port`: `git tag v0.1-phase0-complete && git push --tags`
-- [ ] **Then run Phase 0.5 (boot-path disambiguation — review D2) before any Phase 2 work**
+- [x] **V1.0.0.94 downloaded, MD5 `b1b4a851ca59c19956b0039de316ee41` ✓** + V1.0.0.66 ✓ — on SSD `mirror-2026-07/firmware/`
+- [~] **jp5-mirror: r35.6.4 trio ✓ + r32.5.2 pair ✓ + cp38 wheels ✓ + 14 repo mirrors ✓** — on SSD, SHA256-verified. **Still TODO: apt-repo snapshot** of `repo.download.nvidia.com/jetson/{common,t194}/dists/r35.6` (CUDA/TensorRT debs) — deferred to Phase 1 host setup (installable from NVIDIA apt at build time; not a one-shot big artifact at EOL risk)
+- [x] **Layer 4b BL payloads copied to SSD, SHA256SUMS validated ✓**
+- [x] **Layer 3b QSPI/boot0/1 dumps replicated to SSD, SHA256SUMS validated ✓** (§4c)
+- [x] **`RESCUE_DRILL_RESULT.txt` = PASS (2026-07-09)** — layer2 restored to loopback in 144 s: `Ubuntu 18.04.6 LTS` ✓, `athena-version 1.0.0.94` ✓, 6 athena pkgs, `/opt/ros2/cyberdog` + keystone `.so` intact, 312,020 files. Dog-native (arm64) file-level verify; loopback auto-cleaned. Result saved to SSD.
+- [ ] Layer 4 BSP unpacked + `apply_binaries.sh` — **x86 Phase 1** (tarballs mirrored; unpack needs the host)
+- [ ] Backup-of-backup — **needs 2nd medium** (x86 host or 2nd USB); SSD is currently the only copy of the new mirror/3b/4b
+- [ ] MCU power-gating capture on JP4 side (review D7) — **needs owner** to trigger motion
+- [ ] Tag `v0.1-phase0-complete && git push --tags`
+- [ ] **Then Phase 0.5 (boot-path disambiguation — review D2) before any Phase 2 work**
 
 ## 8. What's next (Phase 1 preview)
 
