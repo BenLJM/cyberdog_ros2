@@ -280,9 +280,15 @@ On Ubuntu 22.04 host:
 
 ## 10. Phase 2 — Rescue initrd + offline NVMe dual-rootfs
 
-> **Redesigned twice:** 2026-04-25 (`PHASE0_BOOT_MECHANISM_FINDINGS.md` — edit-in-place) and **2026-07-07** (review D2/D4: those findings were *confounded*, AND `resize2fs` cannot shrink a mounted root — the original sub-task 2 would have failed on the night). The switch mechanism — edit-in-place vs dual-LABEL `DEFAULT`, and on WHICH filesystem — is decided by **Phase 0.5**, which must complete first.
+> **Redesigned three times.** 2026-04-25 (edit-in-place) → 2026-07-07 (review D2/D4: April was *confounded*; `resize2fs` can't shrink a mounted root) → **2026-07-10, settled by Phase 0.5 experiment** (`PHASE0_BOOT_MECHANISM_FINDINGS.md` v2).
 
-**Design.** eMMC bootloader chain + kernel partitions stay untouched. NVMe becomes: p1 (50 GB, JP4.5 — shrunk **offline**) · p2 (50 GB, JP5 rootfs) · p3 (~17 GB, shared `/data`). JP5 kernel artifacts live as *files* (`/boot-jp5/{Image,initrd,dtb}`) on whichever filesystem Phase 0.5 proved cboot reads; JP4↔JP5 switching edits that one `extlinux.conf` (atomic `rename(2)`) — or just flips `DEFAULT`, if Phase 0.5 resurrected it.
+**Phase 0.5 results (measured, 2026-07-10):**
+
+1. **cboot reads the eMMC APP copy** (`/dev/mmcblk0p1` → `/boot/extlinux/extlinux.conf`). The NVMe copy is decorative. *All* extlinux edits and JP5 kernel artifacts belong on **eMMC APP p1** (1.5 GB, ~46 MB used) — **not** NVMe `/boot-jp5/` as previously planned.
+2. **`DEFAULT` works** → the safer **dual-LABEL** design is adopted: `LABEL jp4` and `LABEL jp5` both persist; switching = flip one word after `DEFAULT` (atomic `rename(2)`).
+3. **`INITRD`-from-file already works** (stock `LABEL primary` uses it every boot) — so cboot's file loader is functional. **`LINUX`/`FDT`-from-file remain unproven (step 4, gated on recovery capability) and are mandatory** — JP5's kernel+DTB must come from files, since the eMMC kernel/DTB partitions hold JP4's and `nvbootctrl` A/B is decorative.
+
+**Design.** eMMC bootloader chain + kernel partitions stay untouched. NVMe becomes: p1 (50 GB, JP4.5 — shrunk **offline**) · p2 (50 GB, JP5 rootfs) · p3 (~17 GB, shared `/data`). JP5 kernel artifacts live as *files* in **`/boot-jp5/` on eMMC APP p1**; JP4↔JP5 switching flips `DEFAULT` in the eMMC APP `extlinux.conf`. Layer 3 `p01.img` is a full dd backup of that partition, so file-level edits there are recoverable.
 
 **Sub-tasks**
 

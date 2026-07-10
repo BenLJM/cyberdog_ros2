@@ -70,18 +70,62 @@ correctly for four years. Therefore:
    and initrd load from eMMC, rootfs mounts from NVMe. That split is already how the
    dog boots today.
 
-## v2 Test 3 — DEFAULT field, on the LIVE copy — *pending*
+## v2 Test 3 — DEFAULT field, on the LIVE copy → **WORKS** ✅
 
-⚠️ **Safety revision (2026-07-10).** The stock `LABEL second` carries
+⚠️ **Safety revision applied first (2026-07-10).** The stock `LABEL second` carries
 `LINUX /boot/Image`, i.e. it would load the **kernel from a file** — one of the two
 still-unproven cboot behaviors. Flipping `DEFAULT` to `second` as-is would silently
-test kernel-file-loading, and a failure means no boot (and the owner currently has no
-recovery capability: no x86 attached, factory recovery cable lost, recovery drill not
-yet done). So `step3-default-test.sh` was revised to **first strip the `LINUX` line**,
-making `second` structurally identical to `primary` (kernel from the kernel partition,
-initrd from the same file, same `root=`). It therefore tests **only** the `DEFAULT`
-field, with **zero boot risk**. Kernel/DTB file-loading is deferred entirely to step 4,
-which now hard-gates on `--i-have-recovery`.
+test kernel-file-loading, and a failure means no boot (owner had no recovery capability
+at the time: no x86 attached, factory recovery cable lost, recovery drill not yet done).
+So `step3-default-test.sh` was revised to **first strip the `LINUX` line**, making
+`second` structurally identical to `primary` (kernel from the kernel partition, initrd
+from the same file, same `root=`). It therefore tested **only** the `DEFAULT` field,
+with zero boot risk.
+
+**Setup:** in the eMMC APP copy — `LABEL second` stripped of its `LINUX` line, marker
+`cyberdog.test=second` on its APPEND, `DEFAULT primary` → `DEFAULT second`.
+
+**Result after reboot:**
+
+```
+/proc/cmdline: … net.ifnames=0 cyberdog.test=second
+```
+
+**cboot honors the `DEFAULT` field.** It selected `LABEL second` by name and booted it
+normally. (April's "DEFAULT is ignored" was an artifact of editing the NVMe copy.)
+
+### This resurrects the dual-LABEL switching design
+
+Phase 2 no longer needs the riskier "rewrite `LABEL primary` in place" scheme:
+
+```
+LABEL jp4      INITRD /boot/initrd            (kernel from eMMC kernel partition)
+               APPEND … root=/dev/nvme0n1p1
+LABEL jp5      LINUX  /boot-jp5/Image         ← needs step-4 result
+               FDT    /boot-jp5/tegra194-mi-k91.dtb   ← needs step-4 result
+               INITRD /boot-jp5/initrd
+               APPEND … root=/dev/nvme0n1p2
+DEFAULT jp4                                   ← switching = flip this ONE word
+```
+
+Advantages over edit-in-place: both entries persist permanently and independently; the
+switch diff is a single word (atomic `rename(2)`); a corrupted edit cannot destroy the
+other OS's entry. The failed-JP5-boot auto-revert hook (review D5) becomes simpler too —
+the initrd only has to rewrite one word back to `jp4`.
+
+## v2 Test 4 — LINUX / FDT from file — *pending, gated* — **still a hard prerequisite**
+
+Note this is **not optional**: JP5's 5.10 kernel and its DTB cannot come from the eMMC
+kernel/DTB partitions without overwriting JP4's (and `nvbootctrl` A/B is decorative, so
+slot B is unreachable). Therefore **JP5 must load its kernel + DTB from files**, making
+`LINUX`-from-file and `FDT`-from-file mandatory for the whole Phase 2/4 design.
+
+Encouraging prior: `INITRD /boot/initrd` is file-loaded on every boot today, so cboot's
+file-loading path demonstrably works; `LINUX`/`FDT` use the same extlinux loader.
+
+Requires recovery capability in hand (x86 host + plain USB-A→C data cable + a completed
+recovery-mode drill; see `PHASE0_RECOVERY_PROCEDURES.md` §1). `step4-fdt-test.sh`
+hard-gates behind `--i-have-recovery`.
 
 ## v2 Test 4 — FDT from file — *pending, gated*
 
