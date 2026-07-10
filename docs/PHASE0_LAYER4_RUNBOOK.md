@@ -262,6 +262,7 @@ all SHA256-verified); rescue drill run natively on-dog (`tools/rescue-drill-nati
 - [x] **`RESCUE_DRILL_RESULT.txt` = PASS (2026-07-09)** — layer2 restored to loopback in 144 s: `Ubuntu 18.04.6 LTS` ✓, `athena-version 1.0.0.94` ✓, 6 athena pkgs, `/opt/ros2/cyberdog` + keystone `.so` intact, 312,020 files. Dog-native (arm64) file-level verify; loopback auto-cleaned. Result saved to SSD.
 - [ ] Layer 4 BSP unpacked + `apply_binaries.sh` — **x86 Phase 1** (tarballs mirrored; unpack needs the host)
 - [ ] Backup-of-backup — **needs 2nd medium** (x86 host or 2nd USB); SSD is currently the only copy of the new mirror/3b/4b
+- [ ] **Recovery-mode drill** (needs x86; owner lost the factory black download cable) — confirm `forced-recovery` + a plain USB-A→C data cable yields the `0955:7e19` APX device on the host, i.e. recovery works WITHOUT the special cable. Zero-risk (enter RCM, flash nothing, power-cycle out). See `PHASE0_RECOVERY_PROCEDURES.md` §1. Optionally test the power-hold+USB BootROM fallback (Path B) too.
 - [ ] MCU power-gating capture on JP4 side (review D7) — **needs owner** to trigger motion
 - [ ] Tag `v0.1-phase0-complete && git push --tags`
 - [ ] **Then Phase 0.5 (boot-path disambiguation — review D2) before any Phase 2 work**

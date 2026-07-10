@@ -6,25 +6,61 @@ Recipes for every failure mode, keyed to the Layer 0–4 backups under `/mnt/bac
 
 Required before any eMMC-level recovery. Two equivalent paths:
 
-### Path A — from the running dog (easiest)
+> **On the "download cable" (clarified 2026-07-09 — the owner lost the factory one).**
+> The official flashing wiki states plainly: *"下载线可以是普通的USB线，也可以是附送的刷机线（应该是黑色的）"* — **a normal USB-A→USB-C data cable works; the factory black cable is NOT required.** The black cable's only special property is a **modified pin that pulls Tegra's FC_REC low on power-up**, so it enters recovery *automatically* — the hardware equivalent of the `forced-recovery` command. Everything after entering recovery (flashall.sh) is identical either way. **Losing the black cable costs only the auto-trigger convenience — and one bricked-system fallback (Path B).** Use a known-good USB **data** cable (not charge-only).
+
+### Path A — from the running dog (easiest; the normal path, no special cable)
 
 ```bash
-# On the dog, over SSH:
+# On the dog, over SSH (Wi-Fi 10.0.0.219 or USB-OTG 192.168.55.1):
 sudo reboot --force forced-recovery
 ```
 
-The dog restarts into the Tegra USB recovery mode. Connect a USB-A → USB-C cable from host PC to the dog's **DOWNLOAD** port. On host:
+The dog restarts into the Tegra USB recovery mode. Connect a plain USB-A → USB-C **data** cable from host PC to the dog's **DOWNLOAD** port. On host:
 
 ```bash
 lsusb | grep -i nvidia
 # Expected: Bus 001 Device NNN: ID 0955:7e19 NVidia Corp.
 ```
 
-### Path B — from a bricked dog (when A is impossible)
+**This is the primary path and it needs no special cable.** Its one prerequisite is
+that the dog boots far enough to run the command (even the Phase-2 rescue initrd
+suffices). The whole Phase 2/4 design deliberately always preserves an SSH-reachable
+boot path precisely so this path always works.
 
-Xiaomi ships a **proprietary black USB cable**. If you don't have it, hold the dog's power button and connect the USB-C to the host PC — Tegra's BootROM enters force-recovery automatically when the XUSB handshake sees a connected host at power-on.
+### Path B — from a fully-bricked dog (can't SSH in to run Path A)
 
-If neither path works and the eMMC bootloader is fully dead, the only remaining path is opening the chassis to access the recovery header — which is explicitly out of scope for this project.
+This is the **only** scenario where the black cable is not substitutable: with no
+shell, you can't issue `forced-recovery`, so recovery must be triggered by hardware.
+Options, best-known first:
+
+1. **Factory black cable** (auto-triggers FC_REC on power-up) — if you still had it.
+2. **Power-button-hold + connect USB-C at power-on** — Tegra BootROM *should* fall
+   into RCM when it sees a host at power-on. ⚠️ **Documented from general Tegra
+   behavior; NOT yet verified on this CyberDog.** Verify during the recovery-drill
+   (below) before relying on it.
+3. **Self-made recovery cable** — replicate the black cable by shorting the
+   appropriate USB-C pin to FC_REC. Needs the k91 DOWNLOAD-port pinout (not yet
+   documented; a teardown/continuity-probe task).
+
+If none work and the eMMC/QSPI bootloader is fully dead, the only remaining path is
+opening the chassis for the recovery header — **explicitly out of scope** (sealed
+enclosure). **This is exactly why the Phase 2/4 design never lets the system brick
+past an SSH-able state** — so Path A always remains available and Path B is never
+actually needed.
+
+### Recovery-mode drill (do once with the x86 host, before Phase 2)
+
+Proves Path A works **without the black cable** — closes the lost-cable gap. Entering
+recovery and doing nothing is **reversible and zero-risk** (RCM just waits for host
+commands; power-cycle without flashing → normal boot):
+
+1. x86 host ready, plain USB-A→C data cable connected to the DOWNLOAD port.
+2. On the dog: `sudo reboot --force forced-recovery`.
+3. On host: `lsusb | grep -i 0955:7e19` — **APX device present ⇒ Path A confirmed cable-independent.**
+4. Do **not** flash anything. Power-cycle the dog → it boots normally back into JP4.5.
+5. While here, optionally test Path B option 2 (power-hold + USB) to learn whether the
+   BootROM-RCM fallback works on this unit.
 
 ## 2. Recovery matrix (keyed to which layer you need)
 
