@@ -1,24 +1,80 @@
 #!/bin/bash
-# Phase 0.5 step 4 — does cboot load DTBs from FDT file lines? (Decides whether
-# JP4/JP5 can pair kernels with their own DTBs — gates the whole Phase 2 design.)
-# Method: FDT -> byte-copy of the stock DTB with only the /model string changed.
-# Usage: ./step4-fdt-test.sh nvme|emmc     ⚠ schedule with the next day free.
+# Phase 0.5 step 4 — does cboot load DTBs from `FDT` file lines?
+# This is THE gate for the Phase 2/4 design (can JP4 and JP5 each carry their own DTB?).
+#
+# ⚠️  UNLIKE steps 1-3, THIS ONE CAN PREVENT THE DOG FROM BOOTING.
+# It points the live boot entry at a DTB file. If this cboot can't load DTBs from
+# files, boot fails and you need recovery mode (x86 host + USB data cable).
+#
+# Usage:  ./step4-fdt-test.sh emmc --i-have-recovery
 source /home/mi/phase0.5/lib.sh
-case "${1:-}" in
+
+COPY=${1:-}
+case "$COPY" in nvme|emmc) ;; *) echo "usage: $0 nvme|emmc --i-have-recovery"; exit 1 ;; esac
+
+if [ "${2:-}" != "--i-have-recovery" ]; then
+  cat <<'EOF'
+==========================  STOP  ==========================
+step4 has REAL boot-failure risk. Before running it you need:
+
+  1. An x86 Ubuntu host, powered on and reachable.
+  2. A plain USB-A -> USB-C DATA cable (the factory black cable is NOT
+     required; see PHASE0_RECOVERY_PROCEDURES.md §1).
+  3. A COMPLETED recovery-mode drill: you have already seen the host
+     enumerate the dog as NVIDIA APX (0955:7e19) after
+     `sudo reboot --force forced-recovery`.
+  4. Ideally: the next day free.
+
+Why: if cboot cannot load a DTB from a file, the dog will not boot, and the
+only way back in is recovery mode. Without (1)-(3) you have no way back.
+
+Steps 1-3 carried no such risk. This one does. If you have all of the above:
+
+    ./step4-fdt-test.sh <nvme|emmc> --i-have-recovery
+
+Otherwise stop here and run:  ./revert-all.sh && sudo reboot
+============================================================
+EOF
+  exit 1
+fi
+
+case "$COPY" in
   nvme) CONF=$NVME_CONF;  BOOTDIR=/boot; backup_once "$CONF" extlinux.conf.nvme.orig ;;
   emmc) mount_emmc_rw; CONF=$EMMC_CONF; BOOTDIR=$EMMC_MNT/boot; backup_once "$CONF" extlinux.conf.emmc.orig ;;
-  *) echo "usage: $0 nvme|emmc   (whichever copy is proven live)"; exit 1 ;;
 esac
-command -v fdtput >/dev/null 2>&1 || { echo "need fdtput:  sudo apt-get install -y device-tree-compiler"; exit 1; }
+command -v fdtput >/dev/null 2>&1 || { echo "need fdtput: sudo apt-get install -y device-tree-compiler"; exit 1; }
+
+# Which LABEL is actually booting right now? Put FDT there, not blindly on primary.
+CMD=$(cat /proc/cmdline)
+if [[ "$CMD" == *cyberdog.test=second* ]]; then TARGET=second
+else TARGET=primary; fi
+echo "current boot label appears to be: $TARGET  (FDT line will go there)"
+
+# Test DTB = byte-copy of the stock one with only the /model string changed.
 sudo cp -a "$BOOTDIR/tegra194-mi-k91.dtb" "$BOOTDIR/dtb-fdttest.dtb"
 sudo fdtput -t s "$BOOTDIR/dtb-fdttest.dtb" / model "NVIDIA Jetson Xavier NX Developer Kit FDTTEST"
 echo "test DTB model: $(sudo fdtget -t s "$BOOTDIR/dtb-fdttest.dtb" / model)"
-add_fdt_line "$CONF"
-[ "${1}" = emmc ] && umount_emmc
-echo
-echo "NEXT:  sudo reboot   — then:  tr -d '\\0' </proc/device-tree/model ; echo"
-echo "  contains FDTTEST  => FDT-from-file WORKS => Phase 2/4 design is safe"
-echo "  unchanged model   => FDT line ignored    => STOP, redesign Phase 2 (review D2.3)"
-echo "  dog does not boot => power-cycle; if still stuck: forced-recovery + x86 host"
-echo "                       (PHASE0_RECOVERY_PROCEDURES.md §1), then ./revert-all.sh"
-echo "When finished either way:  ~/phase0.5/revert-all.sh"
+
+if sudo grep -qE '^[[:space:]]*FDT[[:space:]]' "$CONF"; then
+  echo "FDT line already present — leaving as is"
+else
+  edit_conf "$CONF" '
+    /^LABEL / { inblk = ($2 == "'"$TARGET"'") }
+    { print }
+    inblk && $1 == "INITRD" { print "      FDT /boot/dtb-fdttest.dtb" }
+  ' "add FDT /boot/dtb-fdttest.dtb to LABEL $TARGET"
+fi
+
+touch "$P05/.step4-staged"
+[ "$COPY" = emmc ] && umount_emmc
+
+cat <<EOF
+
+Staged. NEXT:  sudo reboot   — then:  ~/phase0.5/check-after-reboot.sh
+  /proc/device-tree/model contains FDTTEST => FDT-from-file WORKS => Phase 2/4 safe
+  model unchanged                          => FDT ignored => STOP, redesign Phase 2
+  dog does not boot                        => power-cycle once; if still dead:
+      forced-recovery from x86 (PHASE0_RECOVERY_PROCEDURES.md §1), then ./revert-all.sh
+
+When finished either way:  ~/phase0.5/revert-all.sh && sudo reboot
+EOF

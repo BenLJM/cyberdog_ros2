@@ -17,6 +17,82 @@
 > `num_slots: 1` / "RootFS A/B not enabled" came from the boot-control HAL
 > itself, independent of which extlinux file was read.)
 
+---
+
+# v2 — Phase 0.5 results (2026-07-10, definitive)
+
+The confound is resolved by direct experiment. **cboot reads the eMMC APP copy.**
+
+## v2 Test 1 — marker in the NVMe copy → NOT picked up
+
+`cyberdog.src=nvme` appended to `LABEL primary`'s APPEND in
+`/boot/extlinux/extlinux.conf` (NVMe p1). After reboot: **absent** from `/proc/cmdline`.
+
+## v2 Test 2 — marker in the eMMC APP copy → PICKED UP ✅
+
+`cyberdog.src=emmcapp` appended to `LABEL primary`'s APPEND in the eMMC APP copy
+(`/dev/mmcblk0p1` → `/boot/extlinux/extlinux.conf`). After reboot:
+
+```
+/proc/cmdline: … net.ifnames=0 cyberdog.src=emmcapp
+```
+
+**Conclusion: the boot pivot is `/boot/extlinux/extlinux.conf` on the eMMC APP
+partition (`mmcblk0p1`). The NVMe copy is decorative — cboot never reads it.**
+
+### What this overturns
+
+Every April conclusion (§ below) was drawn from edits to the **NVMe** copy, which
+cboot does not read. "extlinux menu doesn't render", "DEFAULT is ignored" — both are
+**void**; they tested a file with no effect on boot. (The `nvbootctrl` A/B findings in
+April's Test 3 remain valid — they came from the boot-control HAL, not extlinux.)
+
+### What this proves positively
+
+`LABEL primary` carries **`INITRD /boot/initrd`** (and no `LINUX` line), and has booted
+correctly for four years. Therefore:
+
+- **cboot CAN load files from the eMMC APP filesystem** — the initrd is loaded from a
+  file on every single boot. File-loading capability is *established*.
+- The **kernel** comes from the eMMC kernel partition (p2, NVDA-wrapped), because
+  `primary` has no `LINUX` line.
+- Still unproven: **`LINUX` from file** and **`FDT` from file** (step 4).
+
+## Design consequences for Phase 2 (supersede the earlier layout)
+
+1. **All extlinux edits target the eMMC APP p1 copy**, not NVMe `/boot`. (A full
+   `dd` image of p1 exists as Layer 3 `p01.img`, so file-level edits there are
+   recoverable.)
+2. **JP5 kernel artifacts must live on eMMC APP p1**, e.g. `/boot-jp5/{Image,initrd,dtb}`
+   — *not* on NVMe `/boot-jp5/` as originally planned. p1 is 1.5 GB with only ~46 MB
+   used, so there is ample room.
+3. The rootfs still lives on NVMe (`root=/dev/nvme0n1p1` today; `p2` for JP5) — kernel
+   and initrd load from eMMC, rootfs mounts from NVMe. That split is already how the
+   dog boots today.
+
+## v2 Test 3 — DEFAULT field, on the LIVE copy — *pending*
+
+⚠️ **Safety revision (2026-07-10).** The stock `LABEL second` carries
+`LINUX /boot/Image`, i.e. it would load the **kernel from a file** — one of the two
+still-unproven cboot behaviors. Flipping `DEFAULT` to `second` as-is would silently
+test kernel-file-loading, and a failure means no boot (and the owner currently has no
+recovery capability: no x86 attached, factory recovery cable lost, recovery drill not
+yet done). So `step3-default-test.sh` was revised to **first strip the `LINUX` line**,
+making `second` structurally identical to `primary` (kernel from the kernel partition,
+initrd from the same file, same `root=`). It therefore tests **only** the `DEFAULT`
+field, with **zero boot risk**. Kernel/DTB file-loading is deferred entirely to step 4,
+which now hard-gates on `--i-have-recovery`.
+
+## v2 Test 4 — FDT from file — *pending, gated*
+
+Requires recovery capability in hand (x86 host + plain USB-A→C data cable + a completed
+recovery-mode drill; see `PHASE0_RECOVERY_PROCEDURES.md` §1). Outcome decides whether
+JP4/JP5 can each carry their own DTB.
+
+---
+
+# v1 — April 2026 tests (superseded; kept for the record)
+
 ## Tests performed
 
 ### Test 1 — extlinux `LABEL second` interactive selection

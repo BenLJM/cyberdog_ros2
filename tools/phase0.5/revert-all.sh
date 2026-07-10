@@ -14,5 +14,6 @@ if [ -f "$BK/extlinux.conf.emmc.orig" ]; then
   sync; sudo umount "$EMMC_MNT"
   echo "restored eMMC APP extlinux.conf"
 fi
+rm -f "$P05/.step3-staged" "$P05/.step4-staged"
 sync
 echo "revert complete — next boot is stock. (Backups kept in $BK for the record.)"
