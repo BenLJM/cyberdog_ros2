@@ -280,6 +280,8 @@ On Ubuntu 22.04 host:
 
 ## 10. Phase 2 — Rescue initrd + offline NVMe dual-rootfs
 
+> **Executable step-by-step: [PHASE2_RUNBOOK.md](./PHASE2_RUNBOOK.md)** (2026-07-10, integrates measured Phase 0.5 results). The summary below stays for context.
+
 > **Redesigned three times.** 2026-04-25 (edit-in-place) → 2026-07-07 (review D2/D4: April was *confounded*; `resize2fs` can't shrink a mounted root) → **2026-07-10, settled by Phase 0.5 experiment** (`PHASE0_BOOT_MECHANISM_FINDINGS.md` v2).
 
 **Phase 0.5 results (measured, 2026-07-10):**
