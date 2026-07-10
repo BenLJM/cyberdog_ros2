@@ -20,13 +20,18 @@ step4 has REAL boot-failure risk. Before running it you need:
   1. An x86 Ubuntu host, powered on and reachable.
   2. A plain USB-A -> USB-C DATA cable (the factory black cable is NOT
      required; see PHASE0_RECOVERY_PROCEDURES.md §1).
-  3. A COMPLETED recovery-mode drill: you have already seen the host
-     enumerate the dog as NVIDIA APX (0955:7e19) after
-     `sudo reboot --force forced-recovery`.
-  4. Ideally: the next day free.
+  3. A COMPLETED recovery-mode drill: host enumerates 0955:7e19 APX after
+     `sudo reboot --force forced-recovery`.  [DONE 2026-07-10]
+  4. ***The ability to actually REFLASH from recovery***, not just enter it:
+     the r32.5.2 BSP unpacked on the host (l4t_initrd_flash.sh present) AND
+     the backups (Layer-3 p01.img / CYBERDOG_BACKUP SSD) reachable from it.
+     This is a Phase-1 deliverable. Entering RCM (#3) is only half the net;
+     without #4 a failed boot is NOT actually recoverable.
+  5. Ideally: the next day free.
 
 Why: if cboot cannot load a DTB from a file, the dog will not boot, and the
-only way back in is recovery mode. Without (1)-(3) you have no way back.
+only way back in is recovery mode. #3 gets you INTO recovery; #4 lets you FIX
+it. You need both.
 
 Steps 1-3 carried no such risk. This one does. If you have all of the above:
 

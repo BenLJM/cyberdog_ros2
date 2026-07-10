@@ -123,9 +123,29 @@ slot B is unreachable). Therefore **JP5 must load its kernel + DTB from files**,
 Encouraging prior: `INITRD /boot/initrd` is file-loaded on every boot today, so cboot's
 file-loading path demonstrably works; `LINUX`/`FDT` use the same extlinux loader.
 
-Requires recovery capability in hand (x86 host + plain USB-A→C data cable + a completed
-recovery-mode drill; see `PHASE0_RECOVERY_PROCEDURES.md` §1). `step4-fdt-test.sh`
-hard-gates behind `--i-have-recovery`.
+**Scheduling decision (2026-07-10): step4 waits for Phase 1.** The recovery-mode drill
+below is done (entering RCM works, host sees `0955:7e19`) — but that only proves the
+*first* half of the safety net: getting into recovery. The *second* half — actually
+repairing a non-booting dog from recovery — needs the x86 host to have the L4T flash
+toolchain unpacked (`l4t_initrd_flash.sh` from the r32.5.2 BSP) and the Layer-3 `p01.img`
+/ backups reachable from that host. Those are Phase 1 deliverables and are **not yet in
+place** (the backup SSD is currently on the dog, and the x86 has no BSP unpacked). Since
+step4 is the one Phase-0.5 test that can actually prevent boot, it is deferred until the
+full recovery capability exists. `step4-fdt-test.sh` hard-gates behind
+`--i-have-recovery`; treat that flag as meaning *"I can not only enter RCM but also
+reflash from it."*
+
+## Phase 0.5 progress (2026-07-10)
+
+- ✅ Test 1/2: cboot reads the **eMMC APP** copy (markers proved it).
+- ✅ Test 3: **`DEFAULT` works** → dual-LABEL switching adopted.
+- ✅ Recovery-mode drill: `forced-recovery` (triggered over Wi-Fi) → host enumerated
+  `0955:7e19` APX. Confirms recovery works **without the lost factory cable**. USB ECM
+  link verified (host `enx…` MAC matches the dog's `mac_ecm_h`); note the dog runs **no
+  DHCP** on the gadget, so the host needs a static `192.168.55.100/24` if SSH-over-USB is
+  wanted — irrelevant to the drill, which uses `lsusb` + Wi-Fi.
+- ✅ Steps 1–3 reverted; dog back to stock (`DEFAULT primary`, no markers, kernel 4.9).
+- ⏳ Test 4 (LINUX/FDT from file): deferred to after Phase 1 (see above).
 
 ## v2 Test 4 — FDT from file — *pending, gated*
 
