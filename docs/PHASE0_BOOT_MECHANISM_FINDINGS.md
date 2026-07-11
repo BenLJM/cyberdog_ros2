@@ -127,7 +127,7 @@ file-loading path demonstrably works; `LINUX`/`FDT` use the same extlinux loader
 below is done (entering RCM works, host sees `0955:7e19`) — but that only proves the
 *first* half of the safety net: getting into recovery. The *second* half — actually
 repairing a non-booting dog from recovery — needs the x86 host to have the L4T flash
-toolchain unpacked (`l4t_initrd_flash.sh` from the r32.5.2 BSP) and the Layer-3 `p01.img`
+toolchain unpacked (**Xiaomi's `flashall.sh` from the V1.0.0.94 firmware** — the reliable k91-aware reflash; NOT `l4t_initrd_flash.sh`, which does not exist in r32.5.2, only in r35.x) and the Layer-3 `p01.img`
 / backups reachable from that host. Those are Phase 1 deliverables and are **not yet in
 place** (the backup SSD is currently on the dog, and the x86 has no BSP unpacked). Since
 step4 is the one Phase-0.5 test that can actually prevent boot, it is deferred until the
@@ -311,9 +311,11 @@ paths in priority order:
    Xiaomi flashing wiki documents `sudo reboot --force forced-recovery`,
    but this requires the running OS — useless here). Alternative: hold
    power button while connecting USB-C cable to host, dog enters BootROM
-   recovery. From x86, use `l4t_initrd_flash.sh` with the rootfs partition
-   mapped over USB. Mount, edit extlinux.conf back to JP4, unmount, done.
-   Time: ~30 min.
+   recovery. From x86, reflash: **r35.6.4's `l4t_initrd_flash.sh`** can boot the
+   dog into an initrd and expose eMMC/NVMe as USB mass-storage → mount p1, edit
+   `extlinux.conf` back, done (fine-grained, loses no data). *(Note: r32.5.2 has
+   NO `l4t_initrd_flash.sh` — confirmed 2026-07-11; use the r35.6.4 tool, or the
+   nuclear option #3.)* Time: ~30 min if the r35 initrd-flash works against k91.
 
 2. **Layer 2 rootfs tar restore** — full partition rewrite from
    `/mnt/backup/cyberdog-2026-04/layer2/rootfs-nvme.tar.zst`. Time: ~45 min.

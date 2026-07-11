@@ -23,10 +23,11 @@ step4 has REAL boot-failure risk. Before running it you need:
   3. A COMPLETED recovery-mode drill: host enumerates 0955:7e19 APX after
      `sudo reboot --force forced-recovery`.  [DONE 2026-07-10]
   4. ***The ability to actually REFLASH from recovery***, not just enter it:
-     the r32.5.2 BSP unpacked on the host (l4t_initrd_flash.sh present) AND
-     the backups (Layer-3 p01.img / CYBERDOG_BACKUP SSD) reachable from it.
-     This is a Phase-1 deliverable. Entering RCM (#3) is only half the net;
-     without #4 a failed boot is NOT actually recoverable.
+     Xiaomi's flashall.sh from the V1.0.0.94 firmware unpacked on the host
+     (k91-aware, 100% reliable nuclear reflash) AND backups reachable.
+     Optionally r35.6.4's l4t_initrd_flash.sh for a fine-grained fix.
+     (r32.5.2 has NO l4t_initrd_flash.sh — only flash.sh.) Entering RCM (#3)
+     is only half the net; without #4 a failed boot is NOT recoverable.
   5. Ideally: the next day free.
 
 Why: if cboot cannot load a DTB from a file, the dog will not boot, and the

@@ -6,10 +6,13 @@ execution purposes. Read `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2 first.
 
 ## 0. Hard preconditions (ALL green before touching the disk)
 
-- [ ] **Phase 1 done**: x86 host has the r32.5.2 BSP unpacked (`l4t_initrd_flash.sh`
-      present) and the `CYBERDOG_BACKUP` SSD (or its mirror) reachable — i.e. a
-      **failed boot is reflashable**, not just enterable (recovery drill already
-      passed 2026-07-10).
+- [ ] **Phase 1 done**: x86 host can **reflash**, not just enter RCM (recovery drill
+      passed 2026-07-10). Reflash tools, in reliability order: (a) **Xiaomi
+      `flashall.sh`** from the V1.0.0.94 firmware — k91-aware, nuclear, 100% reliable,
+      ~45 min; (b) **r35.6.4 `l4t_initrd_flash.sh`** — fine-grained (mount + edit one
+      file), needs k91 validation. *NOTE: r32.5.2 BSP has only the traditional
+      `flash.sh` + NFS scripts — NO `l4t_initrd_flash.sh` (that's r35.x). The r32.5.2
+      BSP still gives `flash.sh` + the recovery-mode plumbing.* SSD backups reachable.
 - [ ] **Phase 0.5 step4 passed**: `LINUX`- and `FDT`-from-file proven to work
       (`./step4-fdt-test.sh emmc --i-have-recovery`). *If step4 fails, this runbook's
       dual-kernel design is invalid — stop and redesign.*
