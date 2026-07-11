@@ -68,7 +68,7 @@ commands; power-cycle without flashing → normal boot):
 |---|---|---|
 | Corrupt rootfs on `nvme0n1p2` (JP5 side) | Re-rsync `Linux_for_Tegra/rootfs/` from x86 host into `/mnt/p2`; re-run Phase 4 | 30 min |
 | Corrupt rootfs on `nvme0n1p1` (JP4.5 side) | Layer 2 `rootfs-nvme.tar.zst` restore (see §3) | 45 min |
-| `/boot/extlinux/extlinux.conf` broken (no boot menu) | Layer 0 `extlinux.conf.original` + Layer 1 `boot-jp4.tar.zst` | 10 min (via USB recovery) |
+| `/boot/extlinux/extlinux.conf` broken | **The LIVE copy is on eMMC APP p1 (`/dev/mmcblk0p1`) — Phase 0.5-proven 2026-07-10; the NVMe copy is decorative.** First option: power-cycle boots whatever `DEFAULT` points at — from `LABEL rescue` (staged 2026-07-11) restore one of the `extlinux.conf.*-saved` copies next to the live file. Else: Layer 3 `p01.img` dd-restore of the whole pivot partition via USB recovery. Layer 0 `extlinux.conf.original` = content reference | 10 min |
 | Wrong kernel or DTB in `/boot` | Layer 1 `boot-jp4.tar.zst` | 10 min |
 | `/params` factory calibration wiped | Layer 0 `params-emmc-p12.img` → `dd` back onto `/dev/mmcblk0p12` | 2 min |
 | Wi-Fi creds lost | Layer 0 `wifi-creds.tar.gz` → extract to `/etc/NetworkManager/system-connections/` | 1 min |
@@ -91,7 +91,9 @@ sudo tar --xattrs --acls --numeric-owner \
   -xf /media/backup/cyberdog-2026-04/layer2/rootfs-nvme.tar.zst \
   -C /mnt/restore
 
-# Re-bless extlinux
+# Re-bless extlinux — content hygiene only: this NVMe copy is DECORATIVE
+# (Phase 0.5: cboot reads the eMMC APP p1 copy — if boot BEHAVIOR is broken,
+# restore that one instead; see the §2 matrix row)
 sudo cp /media/backup/cyberdog-2026-04/layer0/extlinux.conf.original \
         /mnt/restore/boot/extlinux/extlinux.conf
 sudo umount /mnt/restore

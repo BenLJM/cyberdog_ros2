@@ -81,7 +81,7 @@ Derived from live inspection of the running system and the `tegra194-mi-k91` dev
 
 | # | Name | Size | Notes |
 |---|---|---|---|
-| 1 | APP | 1.6 GB | **Boot island, not a rootfs** — contains only `/boot` (Image + initrd + DTB + extlinux.conf, near-identical to the NVMe copy). Possibly what cboot actually reads (review §2.3 → Phase 0.5) |
+| 1 | APP | 1.6 GB | **Boot island, not a rootfs** — contains only `/boot` (Image + initrd + DTB + extlinux.conf). **Confirmed the copy cboot actually reads (Phase 0.5, 2026-07-10)** — the boot pivot; the NVMe copy is decorative |
 | 2, 3 | kernel, kernel_b | 67 MB each | A/B kernel image slots |
 | 4, 5 | kernel-dtb, kernel-dtb_b | 459 KB each | A/B DTB slots |
 | 6 | recovery | 66 MB | Recovery kernel |
@@ -149,9 +149,9 @@ De-risk all three in Phase 0.5 / early Phase 3 before any destructive step.
 
 > **2026-07-07: the original three unknowns are all resolved.** (1) A/B slots: decorative — but the extlinux tests were *confounded*, see new #1 below. (2) Closed-`.so` graph: mapped in Phase 0 forensics — locomotion is open-path. (3) `athena_defconfig`: **exists** in zbwu's tree; issue #1 was a non-recursive-clone artifact (review §3.2). Bonus: **secure-boot fuses verified unburned** (`odm_production_mode=0x0`, review §2.1) — self-built kernels/bootloaders will boot; a never-tested killer assumption is now fact. The NEW top-3:
 
-1. **Which extlinux.conf does cboot read — NVMe p1 or the eMMC APP p1 boot island?** Two near-identical copies exist; every April test edited only the NVMe copy, so "`DEFAULT` is ignored" may be an artifact of editing a file cboot never reads (review §2.3). If the eMMC copy is live and `DEFAULT` works there, the safer dual-LABEL switching design is resurrected. **Resolve in Phase 0.5 with marker bootargs — cheap, reversible.**
-2. **Does this cboot load kernel/DTB from files (`LINUX`/`FDT` lines) at all?** Stock boots the eMMC kernel *partition* (`LABEL primary` has no `LINUX` line; p2 carries an NVDA-wrapped copy of the same 4.9.201 build — review §2.4). If `FDT`-from-file fails, JP4/JP5 cannot pair kernels with their own DTBs and Phase 2 must be redesigned. **Resolve in Phase 0.5 with the model-string FDT test.**
-3. **Audio-codec forward-port complexity (`rt5680` + `tas5805m`, 4.9 → 5.10 ASoC).** The one driver area zbwu never did (his README: mic/speaker "not supported"); sources are open in `cyberdog_tegra_kernel`. Machine-driver/DT-graph churn is the risk. **Scope in early Phase 3.**
+1. ~~**Which extlinux.conf does cboot read — NVMe p1 or the eMMC APP p1 boot island?**~~ — **RESOLVED 2026-07-10 (Phase 0.5 Tests 1–3): the eMMC APP p1 copy is the live pivot** (NVMe copy decorative), **and `DEFAULT` works there** → the safer dual-LABEL switching design is adopted (Phase 2).
+2. ~~**Does this cboot load kernel/DTB from files (`LINUX`/`FDT` lines) at all?**~~ — **RESOLVED 2026-07-11 (Phase 0.5 Test 4): `FDT`-from-file WORKS** (model-string test); `INITRD`-from-file was already proven (stock uses it). `LINUX`-from-file strongly inferred (same extlinux file-loader) — direct proof in the Phase 2 §4.3 dual-kernel rehearsal, before any disk change.
+3. **Audio-codec forward-port complexity (`rt5680` + `tas5805m`, 4.9 → 5.10 ASoC).** The one driver area zbwu never did (his README: mic/speaker "not supported"); sources are open in `cyberdog_tegra_kernel`. Machine-driver/DT-graph churn is the risk. **Scoped 2026-07-08 (not yet executed): MEDIUM-LOW, ~7–12 evenings — see [PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md).**
 
 ## 7. Bricking-risk map
 
@@ -162,7 +162,7 @@ De-risk all three in Phase 0.5 / early Phase 3 before any destructive step.
 | **0** Backup | Low | Pure reads. Only risk: inconsistent tarball if ROS 2 keeps writing state — stop services during Layer 2 dump. |
 | **1** x86 env | None | Host-only. |
 | **0.5** Boot-path disambiguation | Low-Med | Marker bootargs + FDT-copy test; every step reversible; worst case ≈ 30-min forced-recovery revert. Schedule with the next day free. |
-| **2** Rescue initrd + offline NVMe surgery + `extlinux.conf` | **High** | First meaningful brick risk. Surgery runs OFFLINE from the RAM rescue initrd (online root-shrink is impossible — review §2.5). Access path = USB-gadget console (RNDIS + ttyGS0). eMMC stays read-only *except* file-level extlinux edits on APP p1 if Phase 0.5 proves that's the live copy (p01 dd-dump in hand). |
+| **2** Rescue initrd + offline NVMe surgery + `extlinux.conf` | **High** | First meaningful brick risk. Surgery runs OFFLINE from the RAM rescue initrd (online root-shrink is impossible — review §2.5). Access path = USB-gadget console (RNDIS + ttyGS0). eMMC APP p1 **is the boot pivot (Phase 0.5-proven)** and receives file-level additions only (`initrd-rescue`, `/boot-jp5/`, extlinux label/DEFAULT edits — `p01.img` dd-dump in hand); kernel/DTB/bootloader partitions stay untouched. |
 | **3** Kernel rebase | None | Host-only artifacts. |
 | **4** First JP5 boot | **High** | Bad initrd or missing `nvme`/`ext4` driver → kernel panic. Mitigations: bake critical drivers `=y`; `panic=15` bootarg; **auto-revert initrd hook** (root-mount failure → self-restore JP4 extlinux, review D5); USB-gadget console once the kernel is up. |
 | **5** CAN + motors | Medium physical | Motor misbehavior → physical danger. **Dog on a stand, legs off ground, every session.** Not a software brick. |
@@ -284,18 +284,18 @@ On Ubuntu 22.04 host:
 
 > **Redesigned three times.** 2026-04-25 (edit-in-place) → 2026-07-07 (review D2/D4: April was *confounded*; `resize2fs` can't shrink a mounted root) → **2026-07-10, settled by Phase 0.5 experiment** (`PHASE0_BOOT_MECHANISM_FINDINGS.md` v2).
 
-**Phase 0.5 results (measured, 2026-07-10):**
+**Phase 0.5 results (measured, 2026-07-10/11):**
 
 1. **cboot reads the eMMC APP copy** (`/dev/mmcblk0p1` → `/boot/extlinux/extlinux.conf`). The NVMe copy is decorative. *All* extlinux edits and JP5 kernel artifacts belong on **eMMC APP p1** (1.5 GB, ~46 MB used) — **not** NVMe `/boot-jp5/` as previously planned.
 2. **`DEFAULT` works** → the safer **dual-LABEL** design is adopted: `LABEL jp4` and `LABEL jp5` both persist; switching = flip one word after `DEFAULT` (atomic `rename(2)`).
-3. **`INITRD`-from-file already works** (stock `LABEL primary` uses it every boot) — so cboot's file loader is functional. **`LINUX`/`FDT`-from-file remain unproven (step 4, gated on recovery capability) and are mandatory** — JP5's kernel+DTB must come from files, since the eMMC kernel/DTB partitions hold JP4's and `nvbootctrl` A/B is decorative.
+3. **File-loading proven.** `INITRD`-from-file works (stock uses it every boot); **`FDT`-from-file PROVEN 2026-07-11** (Test 4 model-string override observed in `/proc/device-tree/model`). `LINUX`-from-file strongly inferred (same extlinux file-loader) — direct proof in the runbook §4.3 dual-kernel rehearsal. This matters because JP5's kernel+DTB must come from files: the eMMC kernel/DTB partitions hold JP4's and `nvbootctrl` A/B is decorative.
 
 **Design.** eMMC bootloader chain + kernel partitions stay untouched. NVMe becomes: p1 (50 GB, JP4.5 — shrunk **offline**) · p2 (50 GB, JP5 rootfs) · p3 (~17 GB, shared `/data`). JP5 kernel artifacts live as *files* in **`/boot-jp5/` on eMMC APP p1**; JP4↔JP5 switching flips `DEFAULT` in the eMMC APP `extlinux.conf`. Layer 3 `p01.img` is a full dd backup of that partition, so file-level edits there are recoverable.
 
 **Sub-tasks**
 
 1. **Build + rehearse the RAM rescue initrd (2–3 evenings).** Busybox + dropbear/sshd + USB-gadget bring-up (RNDIS `192.168.55.1` **and** `ttyGS0` serial console — reuse the stock `/opt/nvidia/l4t-usb-device-mode` configfs script), booted from its own extlinux entry with the *stock JP4 kernel*, staying in initramfs (never mounts NVMe). Rehearse boot-in/SSH-in/boot-out twice. **This is permanent infrastructure:** several recovery-matrix rows drop from "forced-recovery + x86 host" to "boot rescue label, fix over SSH". **Build materials all confirmed present on-dog 2026-07-09** (`/bin/busybox`, stock initrd template, complete `/opt/nvidia/l4t-usb-device-mode/`, `sshd`) — see [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §5; and the shrink geometry is numerically verified (§6: p1 floor ≈18.5 GB ≪ 50 GB target).
-2. **Offline surgery from the rescue environment (1 evening):** `e2fsck -f /dev/nvme0n1p1` → `resize2fs /dev/nvme0n1p1 45G` → `parted` shrink p1 to 50 GB → create p2 + p3 → `mkfs.ext4 -L JP5_ROOT /dev/nvme0n1p2`, `mkfs.ext4 -L DATA /dev/nvme0n1p3` → `resize2fs /dev/nvme0n1p1` (grow back into p1's final size) → reboot to JP4, verify untouched.
+2. **Offline surgery from the rescue environment (1 evening):** `e2fsck -f` → shrink FS to 48 GiB (**block-count-exact — GiB/GB unit mixups here truncate the filesystem; use the sector-exact procedure in the runbook §5, not round numbers**) → `parted` shrink p1 → create p2 + p3 → mkfs → grow p1's FS back to fill → final `e2fsck -f` → reboot to JP4, verify untouched.
 3. **Boot-switch rehearsal with two identical JP4 kernels** (`/boot/Image` vs `/boot/Image.copy` + marker bootargs): implement `cyberdog-boot-switch jp4|jp5` against the Phase 0.5-proven pivot file, verify atomicity (`cp` to `.tmp` + `mv`) and that both paths boot, **before** any JP5 kernel exists.
 4. Record p1/p2/p3 UUIDs in `MANIFEST.yaml`; keep `extlinux.conf.{jp4,jp5}-saved` canonical copies next to the live one.
 
@@ -354,13 +354,13 @@ On Ubuntu 22.04 host:
 
 ## 12. Phase 4 — First JP5 boot
 
-**Deliverables.** Ubuntu 20.04 rootfs (JP5's sample rootfs + `apply_binaries.sh`) on `nvme0n1p2`; JP5 kernel + DTB + initrd in `/boot-jp5/` on p1; SSH accessible.
+**Deliverables.** Ubuntu 20.04 rootfs (JP5's sample rootfs + `apply_binaries.sh`) on `nvme0n1p2`; JP5 kernel + DTB + initrd in `/boot-jp5/` on **eMMC APP p1** (the boot pivot); SSH accessible.
 
 **Sub-tasks**
 
 1. On x86: `sudo Linux_for_Tegra/apply_binaries.sh` → `Linux_for_Tegra/rootfs/`.
 2. Transfer to dog: with dog booted into JP4.5 (LABEL primary), `rsync -aAXH Linux_for_Tegra/rootfs/ mi@cyberdog:/mnt/p2/`.
-3. Stage kernel + DTB + initrd to `/boot-jp5/` on p1.
+3. Stage kernel + DTB + initrd to `/boot-jp5/` on eMMC APP p1.
 4. Edit `/mnt/p2/etc/fstab`: p2 as `/`, p3 as `/data`.
 5. **Assume no Wi-Fi on first boot** (8821cu is out-of-tree): enable `nv-l4t-usb-device-mode` (RNDIS `192.168.55.1` + `ttyGS0` gadget serial console) in the rootfs **before** first boot — that's the access path. Then install the 8821cu module, copy Wi-Fi creds from Layer 0, configure via NetworkManager.
 6. Reboot → switch to JP5 per the Phase 2 mechanism → watch the USB-gadget console. Expect: cboot → kernel load → mount p2 → systemd-journald → `sshd` up.
@@ -418,7 +418,7 @@ On Ubuntu 22.04 host:
 
 - `aplay -l` shows TAS5805M card.
 - Simple `arecord` / `aplay` loop works.
-- ALSA UCM configs ported from JP4.5 `/etc/alsa/`.
+- Mixer state ported from the JP4.5 capture (`asound.state` + amixer dump, harvested 2026-07-11 → forensics). *No Xiaomi UCM profile exists on stock (`/usr/share/alsa/ucm*` — checked); the old "port UCM configs" item aimed at a nonexistent file.*
 
 ### Closed-source `.so` decision matrix
 
@@ -427,7 +427,7 @@ On Ubuntu 22.04 host:
 | `libaivs_sdk.so` | **Drop** | Xiaomi cloud-dependent; backend dead |
 | `libaudio_{assistant,base,config,interaction}.so` | **Drop** | Replaced by Phase 8 voice stack |
 | `libbody_detect_api.so` | **Replace with YOLOv8-pose or MediaPipe** | Open equivalents match functionality |
-| `libContentMotionAPI.so` | **Copy-forward if glibc-compatible, else reverse-engineer** | Likely tied to trick motions (flip, handshake) |
+| `libContentMotionAPI.so` | **Drop with `libbody_detect_api`** (its only consumer — Phase 0 forensics) | Revisit only if trick motions (flip, handshake) are missed later |
 | `libathena_touch_core.so` | **Copy-forward** | Small surface; touch-sensor glue worth preserving |
 | `libapp_server_core.a` | **Drop** | Phone app replaced by Foxglove in Phase 9 |
 
@@ -523,8 +523,8 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 **On dog (JP4.5 side, read + minimal writes):**
 
-- `extlinux.conf` on the Phase 0.5-proven pivot filesystem (NVMe p1 *or* eMMC APP p1) — plus `extlinux.conf.{jp4,jp5}-saved` canonical copies
-- `/boot-jp5/{Image,initrd,dtb/tegra194-mi-k91.dtb}` — staged JP5 kernel (new dir on p1)
+- `extlinux.conf` on the **eMMC APP p1 boot pivot** (Phase 0.5-proven; the NVMe copy is decorative) — plus `extlinux.conf.{jp4,jp5,rescue}-saved` canonical copies
+- `/boot-jp5/{Image,initrd,tegra194-mi-k91.dtb}` — staged JP5 kernel (new dir on eMMC APP p1)
 - `/dev/nvme0n1p1` — shrunk via `resize2fs` + `parted`
 - `/dev/nvme0n1p2` — new JP5 rootfs
 - `/dev/nvme0n1p3` — shared `/data`
@@ -553,7 +553,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 3. **Sensors.** All 6 `/dev/video*` devices enumerate; BMI160 IMU publishes `/imu/data_raw` at ≥ 200 Hz; battery SOC publishes `/battery_state`.
 4. **Voice.** "Hey CyberDog, sit" → dog sits. OpenAI key never leaves `/etc/cyberdog/llm.env`.
 5. **Remote UI.** Phone browser → `http://cyberdog.local:8080` → Foxglove dashboard shows live cameras + gamepad control works.
-6. **Rollback drill.** Deliberately corrupt `/etc/fstab` on p2, reboot, select `primary`, JP4.5 boots fine. Fix p2 from JP4.5 side.
+6. **Rollback drill.** Deliberately corrupt `/etc/fstab` on p2, reboot, flip `DEFAULT` back to jp4 (`cyberdog-boot-switch jp4` — there is no interactive boot menu), JP4.5 boots fine. Fix p2 from JP4.5 side.
 7. **Full restore drill (quarterly).** Restore `layer2/rootfs-nvme.tar.zst` to a temporary directory, verify completeness.
 
 ## 21. Git strategy
@@ -568,7 +568,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 
 ## 22. Open questions
 
-- Which extlinux.conf does cboot read (NVMe p1 vs eMMC APP p1), and does `DEFAULT` work in the live one? (Phase 0.5 — decides Phase 2's switching mechanism.)
+- ~~Which extlinux.conf does cboot read (NVMe p1 vs eMMC APP p1), and does `DEFAULT` work in the live one?~~ — **RESOLVED 2026-07-10 (Phase 0.5 Tests 1–3): pivot = eMMC APP p1** (NVMe copy decorative); **`DEFAULT` works** → dual-LABEL switching adopted in Phase 2.
 - ~~Does cboot load DTBs from `FDT` file lines?~~ — **RESOLVED 2026-07-11: YES** (Phase 0.5 Test 4 — `/proc/device-tree/model` showed the FDTTEST override). JP4/JP5 can each carry their own kernel+DTB as files in `/boot-jp5/`. `LINUX`-from-file inferred, confirmed in Phase 2 §4.3.
 - ~~How hard is the `rt5680`/`tas5805m` ASoC forward-port 4.9 → 5.10?~~ — **scoped 2026-07-08** ([PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md)): medium-low, ~7–12 evenings, no blocker candidates.
 - What powers the MCU USB links on/off, and what is the `192.168.55.233` "R-domain"? (JP4-side capture before Phase 2 — review D7.)

@@ -1,23 +1,32 @@
 # Phase 2 runbook — rescue initrd + offline NVMe dual-rootfs
 
 Executable step-by-step for Phase 2, integrating the **measured** Phase 0.5 results
-(2026-07-10). Supersedes the design sketch in `JETPACK5_HUMBLE_PORT_PLAN.md` §10 for
-execution purposes. Read `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2 first.
+(2026-07-10/11). Supersedes the design sketch in `JETPACK5_HUMBLE_PORT_PLAN.md` §10
+for execution purposes. Read `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2 first.
+
+> **Status 2026-07-11: §3 built + §4 fully staged, zero reboots so far.** Rescue
+> initrd built, verified offline, and installed on the pivot; `LABEL rescue` +
+> `LABEL jp5` (LINUX/FDT-proof) live with `DEFAULT primary` untouched;
+> `cyberdog-boot-switch` installed and flip-tested round-trip on the live pivot.
+> Kit: `/home/mi/phase2/` (= repo `tools/phase2/`). Remaining: §4 reboot rehearsals
+> (owner nights) → §5 surgery (owner night, next day free).
 
 ## 0. Hard preconditions (ALL green before touching the disk)
 
-- [ ] **Phase 1 done**: x86 host can **reflash**, not just enter RCM (recovery drill
-      passed 2026-07-10). Reflash tools, in reliability order: (a) **Xiaomi
-      `flashall.sh`** from the V1.0.0.94 firmware — k91-aware, nuclear, 100% reliable,
-      ~45 min; (b) **r35.6.4 `l4t_initrd_flash.sh`** — fine-grained (mount + edit one
-      file), needs k91 validation. *NOTE: r32.5.2 BSP has only the traditional
-      `flash.sh` + NFS scripts — NO `l4t_initrd_flash.sh` (that's r35.x). The r32.5.2
-      BSP still gives `flash.sh` + the recovery-mode plumbing.* SSD backups reachable.
-- [ ] **Phase 0.5 step4 passed**: `LINUX`- and `FDT`-from-file proven to work
-      (`./step4-fdt-test.sh emmc --i-have-recovery`). *If step4 fails, this runbook's
-      dual-kernel design is invalid — stop and redesign.*
-- [ ] Backups verified reachable: Layer 2 (rootfs tar), Layer 3 (`p01.img` = full
-      eMMC APP dump — the boot pivot), Layer 3b (QSPI). Rescue drill green.
+- [x] **Phase 1 reflash capability CONFIRMED (2026-07-11, commit 96b0b62)**: RCM
+      drill passed 2026-07-10 with a plain USB cable (`0955:7e19`); **V1.0.0.94's own
+      `flashall.sh` → Xiaomi-bundled `l4t_initrd_flash.sh` verified k91-aware**
+      (board confs present) — see `PHASE0_LAYER4_RUNBOOK.md` sign-off. Reliability
+      order stands: (a) Xiaomi `flashall.sh` — nuclear, byte-exact factory; (b)
+      r35.6.4 `l4t_initrd_flash.sh` — fine-grained. *(r32.5.2 BSP has only
+      traditional `flash.sh` + NFS scripts.)*
+- [x] **Phase 0.5 step4 PASSED 2026-07-11**: `FDT`-from-file directly proven
+      (model-string test); `INITRD`-from-file proven (stock uses it). `LINUX`-from-file
+      strongly inferred (same file-loader) — **directly proven by §4.3 below, before
+      any disk change**. *If §4.3 fails, stop and redesign — no surgery.*
+- [ ] Backups verified reachable **on surgery night**: SSD attached, Layer 2 (rootfs
+      tar), Layer 3 (`p01.img` = full eMMC APP dump — the boot pivot), Layer 3b
+      (QSPI) spot-checked. Rescue drill green. *(SSD was not attached 2026-07-11.)*
 - [ ] Owner has a free next day.
 
 ## 1. Confirmed facts this runbook rests on (Phase 0.5)
@@ -25,7 +34,8 @@ execution purposes. Read `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2 first.
 - **Boot pivot = eMMC APP p1** `/boot/extlinux/extlinux.conf` (`/dev/mmcblk0p1`).
   The NVMe `/boot/...` copy is decorative — do NOT edit it expecting effect.
 - **`DEFAULT` works** → dual-LABEL switching (flip one word, atomic `rename(2)`).
-- **File-loading**: `INITRD` from file works today; `LINUX`/`FDT` pending step4.
+- **File-loading**: `INITRD` from file works today; **`FDT` from file PROVEN
+  2026-07-11** (Test 4); `LINUX` inferred — §4.3 proves it directly.
 - eMMC APP p1 is 1.5 GB, ~46 MB used → ample room for `/boot-jp5/`.
 - NVMe p1 shrink floor ≈ 18.5 GB (`resize2fs -P`), target 50 GB → wide margin.
 - Kernel today loads from the eMMC **kernel partition** (p2), not a file
@@ -74,43 +84,91 @@ LABEL rescue
 Switching = `cyberdog-boot-switch {jp4|jp5|rescue}` rewrites the `DEFAULT` word via
 temp-file + `mv` (atomic). Always target the **eMMC APP p1** copy.
 
-## 3. Build the rescue initrd (materials confirmed on-dog)
+*Interim state (2026-07-11):* live file still uses stock `LABEL primary` (=jp4;
+`cyberdog-boot-switch jp4` maps to it automatically), plus staged `LABEL rescue`
+and `LABEL jp5` — the latter currently in **proof mode** (JP4 kernel copy,
+`root=/dev/nvme0n1p1`) until §4.3 passes and real JP5 artifacts replace it. The
+full rename to the layout above happens with the §5 surgery.
 
-All present (verified 2026-07-09): `/bin/busybox`, the stock gzip-cpio initrd as a
-template, complete `/opt/nvidia/l4t-usb-device-mode/`, `sshd`.
+## 3. Build the rescue initrd — **DONE 2026-07-11** (zero reboots)
 
-1. Unpack stock initrd to a workdir; add `busybox`, `dropbear` (or `sshd` + libs),
-   and a minimal `/init` that: mounts `/proc`,`/sys`,`/dev`; brings up the USB gadget
-   (RNDIS `192.168.55.1` + `ttyGS0`) via the configfs script; starts dropbear; drops
-   to a shell. **Never mounts NVMe** → `nvme0n1p1` is free for offline resize.
-2. Repack as `/boot/initrd-rescue` on eMMC APP p1.
-3. Add the `LABEL rescue` entry (above). Keep `extlinux.conf.rescue-saved`.
+Built, verified offline, and installed by `tools/phase2/build-rescue-initrd.sh` +
+`stage-rescue.sh`. Design deltas vs the original sketch, all deliberate:
+
+- **OpenSSH `sshd` instead of dropbear** — the laptop's key is ed25519, which
+  dropbear 2017.75 (bionic) can't verify; sshd also brings `internal-sftp` (file
+  transfer) and reuses **the dog's real host keys** → same fingerprint, no
+  known_hosts churn. Key-only root login, `authorized_keys` = `~mi/.ssh/`.
+- Base = the **live eMMC APP p1 initrd** (bash + glibc, 16 MB) + static busybox
+  (254 applets in `/bb`) + surgery tools (`parted sgdisk resize2fs e2fsck mkfs.ext4
+  tune2fs dumpe2fs lsblk partprobe wipefs zstd rsync scp` with lib closures).
+- Gadget = configfs replica of stock `nv-l4t-usb-device-mode` (same VID/PID/MACs):
+  RNDIS `usb0` 192.168.55.1 + ACM `ttyGS0` getty. All gadget kernel bits are `=y`
+  in the stock 4.9 config — no modules needed in the initrd.
+- `/init` mounts only proc/sys/dev(+configfs/devpts/tmpfs), **never touches NVMe**,
+  then hands PID1 to busybox init (zombie reaping; sshd + getty respawn).
+- One-key escape hatch **`back-to-jp4`** (= `rescue-boot-switch jp4` + `reboot -f`).
+
+Verified offline (no reboot): `sshd -t` green in chroot; every binary runs against
+the initrd's own libs; scripts `bash -n` clean; installed sha256 matches build.
+Artifact: 26 MB unpacked / 12 MB gz at `/boot/initrd-rescue` on the pivot;
+`LABEL rescue` live; `extlinux.conf.{stock,jp4,rescue}-saved` in place.
 
 ## 4. Rehearse switching + rescue BEFORE any disk change
 
+**Staging DONE 2026-07-11 (no reboots yet):** `cyberdog-boot-switch` installed to
+`/usr/local/sbin` and **flip round-trip tested on the live pivot** (rescue →
+primary, final file byte-identical to `extlinux.conf.jp4-saved`); §4.3's proof
+files staged by `tools/phase2/stage-linux-fdt-proof.sh` (`/boot-jp5/{Image,dtb}` =
+byte-copies of JP4's, `LABEL jp5` live). **Rehearsals 4.1–4.3 fold into ONE owner
+evening (~5–6 reboots), rescue-first** — the escape hatch gets proven before
+anything else depends on it. Next-day-free is only required for §5, not for this.
+
 Zero disk risk — all reversible via `cyberdog-boot-switch jp4`:
 
-1. `cyberdog-boot-switch rescue` → reboot → confirm: shell over USB
-   (`ssh mi@192.168.55.1` needs host static `192.168.55.100/24` — gadget has no DHCP),
-   `mount` shows NO nvme, `cat /proc/cmdline` has `cyberdog.rescue=1`.
-2. From rescue, `cyberdog-boot-switch jp4` isn't available (no full userspace) — so
-   the rescue initrd must itself accept a "boot jp4 next" action, OR you power-cycle
-   and the still-`DEFAULT rescue` boots rescue again → **make rescue's `/init` offer a
-   one-key `switch to jp4 + reboot`**. Rehearse that path twice.
-3. Dual-kernel sanity (needs step4 already passed): stage a **copy of the JP4 kernel**
-   as `/boot-jp5/Image` + its DTB, point `LABEL jp5` at it with `root=/dev/nvme0n1p1`
-   (still JP4 rootfs), `cyberdog-boot-switch jp5` → reboot → `uname` identical to JP4.
-   Proves `LINUX`+`FDT` file-load on the real entry before JP5 exists.
+1. `sudo cyberdog-boot-switch rescue` → reboot → confirm: `ssh root@192.168.55.1`
+   (laptop static `192.168.55.100/24` — gadget has no DHCP; serial fallback =
+   ttyACM 115200), `mount` shows NO nvme, `/proc/cmdline` has `cyberdog.rescue=1`.
+2. In rescue run **`back-to-jp4`** (one key, built into the initrd) → lands in JP4.
+   Rehearse the rescue⇄jp4 cycle **twice**. Note: `DEFAULT` is deliberately
+   **sticky** (no auto-flip-back): if surgery is ever interrupted mid-resize, a
+   power-cycle must land back in rescue, NOT boot JP4 onto a half-shrunk root.
+3. Dual-kernel LINUX-from-file proof (files already staged): `sudo
+   cyberdog-boot-switch jp5` → reboot → normal JP4 boot, `uname -a` identical.
+   Proves `LINUX`+`FDT` file-load on the real entry before JP5 exists. Then
+   `sudo cyberdog-boot-switch primary` → reboot. Run
+   `~/phase2/check-after-reboot.sh` after every landing for the verdict + next step.
 
-## 5. Offline partition surgery (from rescue)
+## 5. Offline partition surgery (from rescue) — **sector-exact**
+
+> **⚠ Unit bug fixed 2026-07-11 (multi-agent review).** The previous steps said
+> `resize2fs 48G` (GiB = 51,539,607,552 B) then `parted resizepart 1 → 50 GB`
+> (SI = 50,000,000,000 B) — the partition end would land **~1.5 GB inside the
+> filesystem** and truncate it. Never mix units here. The procedure below uses
+> 4K-block counts for resize2fs and explicit sectors for parted, precomputed from
+> the measured geometry (2026-07-11): disk 250,069,680 × 512 B sectors; p1 start
+> = sector 40; FS = 31,258,368 × 4K blocks (fills p1 exactly); ~9.3 M blocks used.
+
+Targets: p1 ends at sector **104,859,647** (≈50.0 GiB, 1 MiB-aligned end+1);
+p2 = sectors **104,859,648–209,717,247** (50 GiB, aligned); p3 = **209,717,248–end**
+(≈19.2 GiB).
 
 1. `cyberdog-boot-switch rescue` → reboot → SSH in over USB gadget.
+   Confirm NOTHING mounts the NVMe: `grep nvme /proc/mounts` → empty.
 2. `e2fsck -f /dev/nvme0n1p1`
-3. `resize2fs /dev/nvme0n1p1 48G` (leave headroom over the 18.5 GB floor)
-4. `parted /dev/nvme0n1`: resizepart 1 → 50 GB; mkpart p2 50→100 GB; mkpart p3 → end.
-5. `resize2fs /dev/nvme0n1p1` (grow FS to fill the 50 GB partition exactly)
-6. `mkfs.ext4 -L JP5_ROOT /dev/nvme0n1p2`; `mkfs.ext4 -L DATA /dev/nvme0n1p3`
-7. `cyberdog-boot-switch jp4` → reboot → JP4 comes up untouched; `lsblk` shows p1/p2/p3.
+3. `resize2fs /dev/nvme0n1p1 12582912` — **4K blocks** = exactly 48 GiB; no unit
+   ambiguity. (Floor is ~18.5 GB used; 48 GiB leaves wide margin.)
+4. Verify before touching the partition table:
+   `dumpe2fs -h /dev/nvme0n1p1 | grep 'Block count'` → must print **12582912**.
+   FS bytes = 12,582,912 × 4,096 = 51,539,607,552 ≤ new p1 bytes
+   = (104,859,647 − 40 + 1) × 512 = 53,688,119,296 → **2.0 GiB headroom ✓**
+5. `parted /dev/nvme0n1` → `unit s` → `resizepart 1 104859647s` (answer Yes to the
+   shrink warning) → `mkpart JP5_ROOT ext4 104859648s 209717247s`
+   → `mkpart DATA ext4 209717248s 100%` → `quit`; then `partprobe /dev/nvme0n1`.
+6. `resize2fs /dev/nvme0n1p1` (grow FS to fill the new p1 exactly), then
+   **`e2fsck -f /dev/nvme0n1p1` again — must be clean before rebooting.**
+7. `mkfs.ext4 -L JP5_ROOT /dev/nvme0n1p2`; `mkfs.ext4 -L DATA /dev/nvme0n1p3`
+8. `back-to-jp4` → JP4 comes up untouched; `lsblk` shows p1/p2/p3.
    Record UUIDs in `MANIFEST.yaml`.
 
 ## 6. Recovery matrix (per step)
@@ -129,4 +187,4 @@ Zero disk risk — all reversible via `cyberdog-boot-switch jp4`:
 - [ ] Offline resize left JP4 fully functional (walks, all services).
 - [ ] p2/p3 exist, formatted, UUIDs recorded.
 - [ ] Rescue initrd reachable over USB gadget without Wi-Fi.
-- [ ] Tag `v0.2-phase2-dualboot`.
+- [ ] Tag `v0.1-phase2-dualboot` (name per plan §21's tag ladder).

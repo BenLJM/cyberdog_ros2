@@ -1,0 +1,63 @@
+#!/bin/bash
+# cyberdog-boot-switch — flip the boot DEFAULT on the eMMC APP p1 extlinux.conf
+# (the boot pivot cboot actually reads; proven in Phase 0.5, 2026-07-10).
+#
+#   cyberdog-boot-switch status            show current DEFAULT + labels
+#   cyberdog-boot-switch {primary|jp4|jp5|rescue}   flip DEFAULT (atomic tmp+mv)
+#
+# 'jp4' falls back to 'primary' while the stock label name is still in use.
+# Never edits anything else; refuses labels that don't exist in the file.
+set -euo pipefail
+
+PIVOT_DEV=/dev/mmcblk0p1
+MNT=/mnt/emmc-app
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "run with sudo"
+
+target=${1:-}
+[ -n "$target" ] || { echo "usage: cyberdog-boot-switch {status|primary|jp4|jp5|rescue}"; exit 1; }
+
+own_mount=0
+cleanup() { [ "$own_mount" = 1 ] && umount "$MNT" 2>/dev/null || true; }
+trap cleanup EXIT
+
+if ! mountpoint -q "$MNT"; then
+    mkdir -p "$MNT"
+    mount "$PIVOT_DEV" "$MNT"
+    own_mount=1
+fi
+CONF="$MNT/boot/extlinux/extlinux.conf"
+[ -f "$CONF" ] || die "$CONF not found — wrong partition?"
+
+if [ "$target" = status ]; then
+    echo "pivot : $PIVOT_DEV -> $CONF"
+    echo "DEFAULT: $(awk '/^DEFAULT /{print $2}' "$CONF")"
+    echo "labels : $(grep '^LABEL ' "$CONF" | awk '{print $2}' | tr '\n' ' ')"
+    exit 0
+fi
+
+case "$target" in
+    primary|jp4|jp5|rescue) ;;
+    *) die "unknown target '$target' (use status|primary|jp4|jp5|rescue)" ;;
+esac
+
+if ! grep -q "^LABEL ${target}\$" "$CONF"; then
+    if [ "$target" = jp4 ] && grep -q "^LABEL primary\$" "$CONF"; then
+        echo "note: no LABEL jp4 yet — using stock LABEL primary"
+        target=primary
+    else
+        die "LABEL ${target} does not exist in extlinux.conf"
+    fi
+fi
+
+sed "s/^DEFAULT .*/DEFAULT ${target}/" "$CONF" > "$CONF.tmp"
+grep -q "^DEFAULT ${target}\$" "$CONF.tmp" || { rm -f "$CONF.tmp"; die "rewrite verification failed"; }
+# everything except the DEFAULT line must be byte-identical
+if ! diff <(grep -v '^DEFAULT ' "$CONF") <(grep -v '^DEFAULT ' "$CONF.tmp") > /dev/null; then
+    rm -f "$CONF.tmp"; die "unexpected diff outside the DEFAULT line — aborting"
+fi
+mv "$CONF.tmp" "$CONF"   # atomic rename(2) on the same fs
+sync
+echo "OK: DEFAULT -> ${target}"
+awk '/^DEFAULT /{print "verify : " $0}' "$CONF"

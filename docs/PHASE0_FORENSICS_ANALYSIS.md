@@ -14,14 +14,14 @@
 | `libbody_detect_api.so` | 2 | `athena_camera/maincamera` only | **REPLACE** with YOLOv8-pose / MediaPipe |
 | `libContentMotionAPI.so` | **0** | `libbody_detect_api` only (scope-limited) | **Drop with body_detect_api** |
 | `libathena_touch_core.so` | **0** | `athena_touch` only (small scope) | **COPY-FORWARD** |
-| `libathena_utils_core.so` | **0** | **20+ binaries (keystone)** | **COPY-FORWARD — critical** |
+| `libathena_utils_core.so` | **0** | **20+ binaries (keystone)** | ~~COPY-FORWARD — critical~~ **superseded 2026-07-09: links Foxy rclcpp ABI — see Correction below** |
 | `libapp_server_core.a` | (static) | **No .so consumers** (standalone binary) | **DROP** (replaced by Foxglove) |
 
 ### Keystone: `libathena_utils_core.so`
 
 Consumed by: `athena_body_state`, `athena_camera/maincamera`, `athena_decisionmaker`, `athena_led`, `athena_lightsensor`, `athena_obstacle_detection`, `athena_scene_detection`, `athena_touch`, `athena_tracking`, `interactive`, `libdecisionmaker_core`, `libdecisionutils`, `librtabmap_plugins`, `librtabmap_sync`, `move_base_node`, `ov_msckf/ros_subscribe_msckf`, `libaudio_assistant`, `libaudio_interaction`.
 
-The fact this library has **zero cloud endpoints** means it's pure-local utility/helper code. Copy-forward across glibc 2.27→2.31 is the expected path. Verify with `readelf -V` versioned-symbol check in a JP5 chroot during Phase 5.
+The fact this library has **zero cloud endpoints** means it's pure-local utility/helper code. ~~Copy-forward across glibc 2.27→2.31 is the expected path.~~ *(Superseded — see Correction below.)*
 
 > **Correction 2026-07-09.** "Zero cloud endpoints / pure-local" was about *network*
 > behavior and is correct — but it does **not** make this lib a clean copy-forward.
@@ -75,7 +75,7 @@ Walking depends on `chassis_node`, `cyberdog_motor_sdk`, `cyberdog_locomotion`. 
 
 ## Biggest positive finding
 
-The keystone utility lib has **zero cloud endpoints**. Combined with the clean locomotion path, this means **the minimum-viable walking dog on Humble does not require reverse-engineering any closed code** — only copying `libathena_utils_core.so` forward and replacing the audio/AI/body stacks with open alternatives.
+The keystone utility lib has **zero cloud endpoints**. Combined with the clean locomotion path, this means **the minimum-viable walking dog on Humble does not require reverse-engineering any closed code**. *(Caveat 2026-07-09: the keystone does NOT simply copy forward — it links Foxy rclcpp ABI; disposition is a Phase 5 decision. Walking is unaffected either way — locomotion links no closed lib.)*
 
 ## Captures are at
 
