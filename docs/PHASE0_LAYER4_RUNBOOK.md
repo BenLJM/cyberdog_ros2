@@ -261,7 +261,7 @@ all SHA256-verified); rescue drill run natively on-dog (`tools/rescue-drill-nati
 - [x] **Layer 3b QSPI/boot0/1 dumps replicated to SSD, SHA256SUMS validated ✓** (§4c)
 - [x] **`RESCUE_DRILL_RESULT.txt` = PASS (2026-07-09)** — layer2 restored to loopback in 144 s: `Ubuntu 18.04.6 LTS` ✓, `athena-version 1.0.0.94` ✓, 6 athena pkgs, `/opt/ros2/cyberdog` + keystone `.so` intact, 312,020 files. Dog-native (arm64) file-level verify; loopback auto-cleaned. Result saved to SSD.
 - [ ] Layer 4 BSP unpacked + `apply_binaries.sh` — **x86 Phase 1** (tarballs mirrored; unpack needs the host)
-- [ ] Backup-of-backup — **needs 2nd medium** (x86 host or 2nd USB); SSD is currently the only copy of the new mirror/3b/4b
+- [x] **Backup-of-backup DONE (2026-07-11)** — core layers (layer0/1/2/3b/4b, 6.3 GB) rsync'd to x86 `~/cyberdog-backup-mirror/`, verified (layer2 zstd -t; layer3b/4b sha256 -c). 2 physical media now. *Excluded by design:* layer3 (15 GB eMMC dump — SSD-only, acceptable; params already in layer0) and mirror-2026-07 (19 GB — dog NVMe holds a 2nd copy).
 - [x] **Recovery-mode drill DONE (2026-07-10)** — `sudo reboot --force forced-recovery` (triggered over Wi-Fi) → x86 host enumerated `0955:7e19` APX with a plain USB-A→C data cable. **Recovery works WITHOUT the lost factory cable.** Dog power-cycled back to JP4.5 cleanly. *(Second half of the safety net — actually reflashing from RCM — still needs the Phase-1 x86 toolchain; that's why boot-risky step4 waits for Phase 1.)*
 - [ ] MCU power-gating capture on JP4 side (review D7) — **needs owner** to trigger motion
 - [ ] Tag `v0.1-phase0-complete && git push --tags`
