@@ -148,6 +148,9 @@ echo "OK: DEFAULT -> ${t}.  Reboot with:  reboot -f"
 EOF
 chmod 755 "$ROOT/sbin/rescue-boot-switch"
 
+install -m 755 /home/mi/phase2/rescue-surgery.sh "$ROOT/sbin/rescue-surgery"
+install -m 755 /home/mi/phase2/rescue-autorun.sh "$ROOT/sbin/rescue-autorun"
+
 cat > "$ROOT/sbin/back-to-jp4" <<'EOF'
 #!/bin/bash
 # one-key escape hatch: point DEFAULT back at JP4 and reboot immediately
@@ -264,6 +267,7 @@ chmod 755 "$ROOT/etc/rc.rescue"
 
 cat > "$ROOT/etc/inittab" <<'EOF'
 ::sysinit:/etc/rc.rescue
+::once:/sbin/rescue-autorun
 ::respawn:/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config
 ::respawn:/bb/getty -n -l /bin/bash 115200 ttyGS0 vt100
 ::askfirst:/bin/bash
