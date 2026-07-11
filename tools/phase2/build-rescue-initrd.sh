@@ -117,6 +117,35 @@ shadow: files
 hosts: files
 EOF
 
+# ---------- Wi-Fi userspace (driver + firmware are BUILT INTO the stock kernel:
+#             CONFIG_RTL8821CU=y + CONFIG_EXTRA_FIRMWARE=rtl8821cu_fw) ----------
+copy_bin /sbin/wpa_supplicant
+{
+    echo "ctrl_interface=/var/run/wpa_supplicant"
+    for f in /etc/NetworkManager/system-connections/*; do
+        [ -f "$f" ] || continue
+        ssid=$(sed -n 's/^ssid=//p' "$f" | head -1)
+        psk=$(sed -n 's/^psk=//p' "$f" | head -1)
+        [ -n "$ssid" ] && [ -n "$psk" ] || continue
+        printf 'network={\n\tssid="%s"\n\tpsk="%s"\n}\n' "$ssid" "$psk"
+    done
+} > "$ROOT/etc/wpa_supplicant.conf"
+chmod 600 "$ROOT/etc/wpa_supplicant.conf"
+grep -q 'network=' "$ROOT/etc/wpa_supplicant.conf" \
+    || echo "WARN: no Wi-Fi credentials captured — rescue will be USB/serial only"
+
+cat > "$ROOT/etc/udhcpc.script" <<'EOF'
+#!/bin/sh
+# minimal udhcpc hook for the rescue initramfs
+case "$1" in bound|renew) ;; *) exit 0 ;; esac
+ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}" up
+while /bb/route del default 2>/dev/null; do :; done
+[ -n "${router%% *}" ] && /bb/route add default gw "${router%% *}" "$interface"
+echo "rescue: wifi $interface $ip" > /dev/kmsg
+exit 0
+EOF
+chmod 755 "$ROOT/etc/udhcpc.script"
+
 # ---------- rescue tools ----------
 cat > "$ROOT/sbin/rescue-boot-switch" <<'EOF'
 #!/bin/bash
@@ -260,8 +289,25 @@ else
     echo "rescue: no UDC found — gadget skipped (ttyTCU0 only)" > /dev/kmsg
 fi
 
+# --- Wi-Fi, best effort in background (driver+fw built into this kernel) ---
+(
+    for i in $(seq 45); do [ -d /sys/class/net/wlan0 ] && break; sleep 1; done
+    if [ -d /sys/class/net/wlan0 ] && [ -s /etc/wpa_supplicant.conf ]; then
+        ifconfig wlan0 up 2>/dev/null || true
+        wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf >/dev/null 2>&1
+        if /bb/udhcpc -i wlan0 -s /etc/udhcpc.script -t 15 -T 3 -n -q >/dev/null 2>&1; then
+            wip=$(/bb/ip -4 addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+            echo "rescue: Wi-Fi UP — ssh root@${wip}" > /dev/kmsg
+        else
+            echo "rescue: Wi-Fi join failed — USB gadget/serial still available" > /dev/kmsg
+        fi
+    else
+        echo "rescue: no wlan0 or no Wi-Fi conf — USB gadget/serial only" > /dev/kmsg
+    fi
+) &
+
 . /etc/rescue-banner > /dev/kmsg 2>&1 || true
-echo "rescue: ready — ssh root@192.168.55.1" > /dev/kmsg
+echo "rescue: ready — ssh root@192.168.55.1 (USB) or Wi-Fi IP above" > /dev/kmsg
 EOF
 chmod 755 "$ROOT/etc/rc.rescue"
 

@@ -37,8 +37,11 @@ grep -q '^::once:/sbin/rescue-autorun$' "$V/etc/inittab" || die "autorun not in 
 grep -q 'NEW_P1_END=104859647' "$V/sbin/rescue-surgery" || die "surgery params missing"
 grep -q 'SHRINK_BLOCKS=12582912' "$V/sbin/rescue-surgery" || die "surgery params missing"
 grep -q 'P1_GUID=0D799F10-BC04-4D32-AF66-771FD6147249' "$V/sbin/rescue-surgery" || die "p1 GUID missing"
+[ -x "$V/sbin/wpa_supplicant" ] || die "wpa_supplicant missing from initrd"
+grep -q 'network=' "$V/etc/wpa_supplicant.conf" || die "no Wi-Fi credentials in initrd"
+[ -x "$V/etc/udhcpc.script" ] || die "udhcpc script missing"
 rm -rf "$V"
-echo "    verification OK"
+echo "    verification OK (incl. Wi-Fi-in-rescue)"
 
 echo "=== 3/5 install to boot pivot"
 mountpoint -q "$MNT" || { mkdir -p "$MNT"; mount /dev/mmcblk0p1 "$MNT"; }
@@ -50,6 +53,7 @@ sync
 want=$(sha256sum "$PH2/initrd-rescue" | cut -d' ' -f1)
 got=$(sha256sum "$MNT/boot/initrd-rescue" | cut -d' ' -f1)
 [ "$want" = "$got" ] || die "sha256 mismatch after copy"
+chmod 600 "$MNT/boot/initrd-rescue" "$PH2/initrd-rescue"   # contains Wi-Fi PSK + host keys
 echo "    installed ($got)"
 
 echo "=== 4/5 arm one-shot surgery + DEFAULT rescue"
