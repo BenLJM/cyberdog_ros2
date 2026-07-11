@@ -569,7 +569,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 ## 22. Open questions
 
 - Which extlinux.conf does cboot read (NVMe p1 vs eMMC APP p1), and does `DEFAULT` work in the live one? (Phase 0.5 — decides Phase 2's switching mechanism.)
-- Does cboot load DTBs from `FDT` file lines? (Phase 0.5 model-string test — decides whether JP4/JP5 can pair kernels with their own DTBs.)
+- ~~Does cboot load DTBs from `FDT` file lines?~~ — **RESOLVED 2026-07-11: YES** (Phase 0.5 Test 4 — `/proc/device-tree/model` showed the FDTTEST override). JP4/JP5 can each carry their own kernel+DTB as files in `/boot-jp5/`. `LINUX`-from-file inferred, confirmed in Phase 2 §4.3.
 - ~~How hard is the `rt5680`/`tas5805m` ASoC forward-port 4.9 → 5.10?~~ — **scoped 2026-07-08** ([PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md)): medium-low, ~7–12 evenings, no blocker candidates.
 - What powers the MCU USB links on/off, and what is the `192.168.55.233` "R-domain"? (JP4-side capture before Phase 2 — review D7.)
 - Whether r35.6.4 has breaking camera-driver ABI changes vs zbwu's r35.1 baseline (determined in Phase 3 rebase).

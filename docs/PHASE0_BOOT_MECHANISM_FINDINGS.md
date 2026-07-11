@@ -113,7 +113,7 @@ switch diff is a single word (atomic `rename(2)`); a corrupted edit cannot destr
 other OS's entry. The failed-JP5-boot auto-revert hook (review D5) becomes simpler too —
 the initrd only has to rewrite one word back to `jp4`.
 
-## v2 Test 4 — LINUX / FDT from file — *pending, gated* — **still a hard prerequisite**
+## v2 Test 4 — LINUX / FDT from file — FDT PROVEN ✅ (2026-07-11)
 
 Note this is **not optional**: JP5's 5.10 kernel and its DTB cannot come from the eMMC
 kernel/DTB partitions without overwriting JP4's (and `nvbootctrl` A/B is decorative, so
@@ -145,7 +145,17 @@ k91-aware, MD5-verified complete package). *Correction: the V94 package DOES shi
 `l4t_initrd_flash.sh` — Xiaomi added it even though stock r32.5.2 lacks it.* step4 may be
 run when the owner is unhurried and on mains power.
 
-## Phase 0.5 progress (2026-07-10)
+**RESULT (2026-07-11): FDT-from-file WORKS.** `FDT /boot/dtb-fdttest.dtb` (a byte-copy of
+the k91 DTB with `/model` changed to `…FDTTEST`) added to the live `LABEL primary` on the
+eMMC APP copy; after reboot `/proc/device-tree/model` = `NVIDIA Jetson Xavier NX Developer
+Kit FDTTEST`. **cboot loaded the DTB from the file.** Dog booted normally, recovery never
+needed, then `revert-all.sh` returned it to stock (`clean ✓`). **The last project-level
+dual-boot unknown is closed — Phase 2/4 is viable.** *Caveat:* this directly proves `FDT`;
+`LINUX`-from-file (same extlinux loader path as the proven `INITRD`/`FDT`) is strongly
+inferred and gets its direct proof in the Phase 2 "two identical kernels" rehearsal
+(`PHASE2_RUNBOOK.md` §4.3, low-risk — JP4 kernel copy, `root=` unchanged).
+
+## Phase 0.5 progress — **COMPLETE (2026-07-11)**
 
 - ✅ Test 1/2: cboot reads the **eMMC APP** copy (markers proved it).
 - ✅ Test 3: **`DEFAULT` works** → dual-LABEL switching adopted.
@@ -154,14 +164,21 @@ run when the owner is unhurried and on mains power.
   link verified (host `enx…` MAC matches the dog's `mac_ecm_h`); note the dog runs **no
   DHCP** on the gadget, so the host needs a static `192.168.55.100/24` if SSH-over-USB is
   wanted — irrelevant to the drill, which uses `lsusb` + Wi-Fi.
-- ✅ Steps 1–3 reverted; dog back to stock (`DEFAULT primary`, no markers, kernel 4.9).
-- ⏳ Test 4 (LINUX/FDT from file): deferred to after Phase 1 (see above).
+- ✅ Test 4: **FDT-from-file WORKS** (2026-07-11) — `/proc/device-tree/model` showed the
+  override; DTB loaded from file. `LINUX`-from-file inferred (Phase 2 §4.3 confirms).
+- ✅ All steps reverted; dog back to stock (`DEFAULT primary`, no markers, kernel 4.9,
+  `clean ✓`).
 
-## v2 Test 4 — FDT from file — *pending, gated*
+**→ Phase 0.5 is DONE. All four questions answered. The Phase 2/4 dual-boot design
+(eMMC APP p1 pivot · dual-LABEL DEFAULT switching · JP5 kernel+DTB from `/boot-jp5/`
+files) is fully validated.**
 
-Requires recovery capability in hand (x86 host + plain USB-A→C data cable + a completed
-recovery-mode drill; see `PHASE0_RECOVERY_PROCEDURES.md` §1). Outcome decides whether
-JP4/JP5 can each carry their own DTB.
+## v2 Test 4 procedure (for the record)
+
+Performed via `step4-fdt-test.sh emmc --i-have-recovery`: adds an `FDT` line to the live
+`LABEL primary` pointing at a byte-copy of the k91 DTB whose `/model` string was changed;
+verdict read from `/proc/device-tree/model` after reboot. **Result: PASSED** (see Test 4
+result above). Reverted with `revert-all.sh`.
 
 ---
 
