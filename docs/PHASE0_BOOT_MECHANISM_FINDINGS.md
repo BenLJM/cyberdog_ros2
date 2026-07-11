@@ -135,6 +135,16 @@ full recovery capability exists. `step4-fdt-test.sh` hard-gates behind
 `--i-have-recovery`; treat that flag as meaning *"I can not only enter RCM but also
 reflash from it."*
 
+**RESOLVED 2026-07-11 — step4 preconditions now MET.** On the x86 host (Ben-Nano,
+Ubuntu, SSD `phase1-work/`): r32.5.2 BSP unpacked (stock `flash.sh`), and the **V94
+firmware unpacked with reflash capability confirmed** — `flashall.sh` drives Xiaomi's
+own bundled `tools/kernel_flash/l4t_initrd_flash.sh --flash-only -c
+external_storage_layout_nvme.xml --external-device nvme0n1p1` with the k91 board confs.
+So BOTH halves of the net exist now: enter-RCM (drill done) + reflash (V94 flashall,
+k91-aware, MD5-verified complete package). *Correction: the V94 package DOES ship
+`l4t_initrd_flash.sh` — Xiaomi added it even though stock r32.5.2 lacks it.* step4 may be
+run when the owner is unhurried and on mains power.
+
 ## Phase 0.5 progress (2026-07-10)
 
 - ✅ Test 1/2: cboot reads the **eMMC APP** copy (markers proved it).
