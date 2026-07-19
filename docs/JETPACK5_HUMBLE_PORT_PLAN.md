@@ -49,7 +49,7 @@ Xiaomi ended the public CyberDog roadmap in 2022; the XiaoAi cloud voice service
 ## 2. Hard constraints
 
 - **No physical disassembly.** The NVMe is behind a sealed enclosure with ribbon cables. Rollback must be software-only. Corrupted eMMC bootloader = unrecoverable without opening = brick.
-- **x86_64 Ubuntu 22.04 host PC required** for flashing, cross-compile, and rescue (NVIDIA's tools are x86-only).
+- **x86_64 Ubuntu 18.04/20.04 host PC required** for flashing and rescue — that is r35.6.4's official host matrix (22.04 is NOT in it; NVIDIA's tegraflash tools are x86-only). Rootfs *assembly* has arm64 alternatives, but the x86 laptop stays non-negotiable for rescue flashing.
 - **External USB SSD ≥256 GB** for backup storage (three layers of redundancy for critical data).
 - **LLM provider**: OpenAI (API key stored in `/etc/cyberdog/llm.env`, root-only).
 - **Target ROS 2 distro**: Humble Hawksbill (source-built on Ubuntu 20.04).
@@ -141,7 +141,7 @@ Live `athena_*` package names on disk correspond to the pre-migration internal n
 | LLM | OpenAI Chat Completions (streaming) | proprietary API | Key in `/etc/cyberdog/llm.env` |
 | TTS | [Kokoro TTS](https://github.com/nazdridoy/kokoro-tts) | Apache-2 | 82 M params, en + zh bilingual, 210× realtime on GPU |
 
-**Remote UI:** [foxglove_bridge](https://github.com/foxglove/ros-foxglove-bridge) (MIT, `apt install ros-humble-foxglove-bridge`) + [Lichtblick](https://github.com/Lichtblick-Suite/lichtblick) (MPL-2.0, BMW's actively-maintained fork of Foxglove v1 — v1.26.0, 2026-06) + [rosbridge_suite](https://github.com/RobotWebTools/rosbridge_suite) for the thin React/Vite web UI hosted on-dog via caddy. *(Foxglove Studio v2 went closed + account-gated in 2024; its free tier is a usable optional extra — review D12.)*
+**Remote UI:** [foxglove_bridge](https://github.com/foxglove/ros-foxglove-bridge) (MIT, source-built — packages.ros.org's focal dist carries **no** `ros-humble-*` binaries; see §14) + [Lichtblick](https://github.com/Lichtblick-Suite/lichtblick) (MPL-2.0, BMW's actively-maintained fork of Foxglove v1 — v1.26.0, 2026-06) + [rosbridge_suite](https://github.com/RobotWebTools/rosbridge_suite) for the thin React/Vite web UI hosted on-dog via caddy. *(Foxglove Studio v2 went closed + account-gated in 2024; its free tier is a usable optional extra — review D12.)*
 
 ## 6. Top-3 project-killing unknowns
 
@@ -150,7 +150,7 @@ De-risk all three in Phase 0.5 / early Phase 3 before any destructive step.
 > **2026-07-07: the original three unknowns are all resolved.** (1) A/B slots: decorative — but the extlinux tests were *confounded*, see new #1 below. (2) Closed-`.so` graph: mapped in Phase 0 forensics — locomotion is open-path. (3) `athena_defconfig`: **exists** in zbwu's tree; issue #1 was a non-recursive-clone artifact (review §3.2). Bonus: **secure-boot fuses verified unburned** (`odm_production_mode=0x0`, review §2.1) — self-built kernels/bootloaders will boot; a never-tested killer assumption is now fact. The NEW top-3:
 
 1. ~~**Which extlinux.conf does cboot read — NVMe p1 or the eMMC APP p1 boot island?**~~ — **RESOLVED 2026-07-10 (Phase 0.5 Tests 1–3): the eMMC APP p1 copy is the live pivot** (NVMe copy decorative), **and `DEFAULT` works there** → the safer dual-LABEL switching design is adopted (Phase 2).
-2. ~~**Does this cboot load kernel/DTB from files (`LINUX`/`FDT` lines) at all?**~~ — **RESOLVED 2026-07-11 (Phase 0.5 Test 4): `FDT`-from-file WORKS** (model-string test); `INITRD`-from-file was already proven (stock uses it). `LINUX`-from-file strongly inferred (same extlinux file-loader) — direct proof in the Phase 2 §4.3 dual-kernel rehearsal, before any disk change.
+2. ~~**Does this cboot load kernel/DTB from files (`LINUX`/`FDT` lines) at all?**~~ — **RESOLVED 2026-07-11 (Phase 0.5 Test 4): `FDT`-from-file WORKS** (model-string test); `INITRD`-from-file works too, but with two measured caveats (PHASE2_RUNBOOK §3b): this cboot **ignores the extlinux `INITRD` line unless the stanza also has a `LINUX` line**, and the ramdisk load buffer tops out at the stock initrd size — **7,236,790 B packed / 16 MiB raw** — an OVERSIZED initrd is **swapped SILENTLY for the stock `/boot/initrd` with no error**. `LINUX`-from-file strongly inferred (same extlinux file-loader) — direct proof in the Phase 2 §4.3 dual-kernel rehearsal, before any disk change.
 3. **Audio-codec forward-port complexity (`rt5680` + `tas5805m`, 4.9 → 5.10 ASoC).** The one driver area zbwu never did (his README: mic/speaker "not supported"); sources are open in `cyberdog_tegra_kernel`. Machine-driver/DT-graph churn is the risk. **Scoped 2026-07-08 (not yet executed): MEDIUM-LOW, ~7–12 evenings — see [PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md).**
 
 ## 7. Bricking-risk map
@@ -167,6 +167,8 @@ De-risk all three in Phase 0.5 / early Phase 3 before any destructive step.
 | **4** First JP5 boot | **High** | Bad initrd or missing `nvme`/`ext4` driver → kernel panic. Mitigations: bake critical drivers `=y`; `panic=15` bootarg; **auto-revert initrd hook** (root-mount failure → self-restore JP4 extlinux, review D5); USB-gadget console once the kernel is up. |
 | **5** CAN + motors | Medium physical | Motor misbehavior → physical danger. **Dog on a stand, legs off ground, every session.** Not a software brick. |
 | **6–10** Humble + voice + UI | Low | Software-only; rollback = reboot + LABEL primary. |
+
+**Software brick vector (added 2026-07-19 retrospective — [RETROSPECTIVE-2026-07-19.md](./RETROSPECTIVE-2026-07-19.md) H2).** The r35 rootfs's `nvidia-l4t-bootloader` package ships `nv-l4t-bootloader-config.service` / `nv_update_engine`, which can write BUP payloads to the boot chain — while this dog keeps Xiaomi's r32.5 cboot in QSPI NOR (the brick-relevant flash, per §3). Any later `apt upgrade` of that package could trigger a QSPI write on the next boot. **Rule: before first boot, in the p2 rootfs chroot:** `systemctl mask nv-l4t-bootloader-config.service`; `apt-mark hold nvidia-l4t-bootloader nvidia-l4t-initrd nvidia-l4t-xusb-firmware`; verify the `.nv-l4t-disable-boot-fw-update-in-preinstall` flag is present. **Standing rule: nothing on the JP5 side may ever write `mtdblock0` or the eMMC boot partitions.**
 
 ## 8. Phase 0 — Backups & forensics
 
@@ -261,7 +263,9 @@ Full procedure + rationale: **review D2**. Summary — 1–2 evenings, 3–4 reb
 
 ## 9. Phase 1 — x86 host dev environment
 
-On Ubuntu 22.04 host:
+> **Status (2026-07-19).** The cross-compile Docker plan below is superseded by the Mac colima **native-arm64** container (`cyberdog-kbuild`, recipe now at `tools/phase3/docker/Dockerfile`); "fork all repos" is superseded by the committed patch-series (`tools/phase3/cyberdog-deltas` + `REPRODUCE.md`). **Track S NOT started as of 2026-07-19** — reactivated as the parallel software work between hardware nights (§14's night budget depends on it).
+
+On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 
 - Install NVIDIA SDK Manager; pull JetPack 5.1.6 (L4T r35.6.4).
 - Fork all repos under the owner's GitHub and clone pinned:
@@ -288,7 +292,7 @@ On Ubuntu 22.04 host:
 
 1. **cboot reads the eMMC APP copy** (`/dev/mmcblk0p1` → `/boot/extlinux/extlinux.conf`). The NVMe copy is decorative. *All* extlinux edits and JP5 kernel artifacts belong on **eMMC APP p1** (1.5 GB, ~46 MB used) — **not** NVMe `/boot-jp5/` as previously planned.
 2. **`DEFAULT` works** → the safer **dual-LABEL** design is adopted: `LABEL jp4` and `LABEL jp5` both persist; switching = flip one word after `DEFAULT` (atomic `rename(2)`).
-3. **File-loading proven.** `INITRD`-from-file works (stock uses it every boot); **`FDT`-from-file PROVEN 2026-07-11** (Test 4 model-string override observed in `/proc/device-tree/model`). `LINUX`-from-file strongly inferred (same extlinux file-loader) — direct proof in the runbook §4.3 dual-kernel rehearsal. This matters because JP5's kernel+DTB must come from files: the eMMC kernel/DTB partitions hold JP4's and `nvbootctrl` A/B is decorative.
+3. **File-loading proven — with two hard caveats (runbook §3b).** `INITRD`-from-file works, but only when the stanza **also carries a `LINUX` line** (this cboot ignores a lone `INITRD`); and the ramdisk load buffer tops out at the stock initrd size — **7,236,790 B packed / 16 MiB raw** — an OVERSIZED initrd is **swapped SILENTLY for the stock `/boot/initrd`, no error printed** (verify the loaded size in dmesg on every armed boot). **`FDT`-from-file PROVEN 2026-07-11** (Test 4 model-string override observed in `/proc/device-tree/model`). `LINUX`-from-file strongly inferred (same extlinux file-loader) — direct proof in the runbook §4.3 dual-kernel rehearsal. This matters because JP5's kernel+DTB must come from files: the eMMC kernel/DTB partitions hold JP4's and `nvbootctrl` A/B is decorative.
 
 **Design.** eMMC bootloader chain + kernel partitions stay untouched. NVMe becomes: p1 (50 GB, JP4.5 — shrunk **offline**) · p2 (50 GB, JP5 rootfs) · p3 (~17 GB, shared `/data`). JP5 kernel artifacts live as *files* in **`/boot-jp5/` on eMMC APP p1**; JP4↔JP5 switching flips `DEFAULT` in the eMMC APP `extlinux.conf`. Layer 3 `p01.img` is a full dd backup of that partition, so file-level edits there are recoverable.
 
@@ -301,7 +305,7 @@ On Ubuntu 22.04 host:
 
 **Verification.** `lsblk` shows p1/p2/p3; JP4 boots normally post-shrink; rescue label boots + SSH over USB works; switch rehearsal passes repeated cycles.
 
-**Rollback.** Botched extlinux → boot rescue label, restore from saved copy. Rescue label itself broken → forced-recovery + x86 host (`PHASE0_RECOVERY_PROCEDURES.md` §1, ~30 min). Filesystem damage → Layer 2/3 restores, unchanged.
+**Rollback.** Botched extlinux → boot rescue label, restore from saved copy — ⚠️ **caveat (2026-07-19): the three `*-saved` copies on the dog are Jul-11 vintage; their rescue stanza predates the Jul-17 `LINUX`-line fix, so restoring them silently breaks the rescue escape hatch. They are UNTRUSTWORTHY until regenerated in §12 ③.** Archived ground truth: [extlinux-live-2026-07-19.conf](./extlinux-live-2026-07-19.conf). Rescue label itself broken → forced-recovery + x86 host (`PHASE0_RECOVERY_PROCEDURES.md` §1, ~30 min). Filesystem damage → Layer 2/3 restores, unchanged.
 
 **Time: ~4 evenings (12 hrs).** (Was 2 — the rescue initrd is new scope, and worth it.) Schedule surgery night with the next full day free.
 
@@ -322,16 +326,16 @@ On Ubuntu 22.04 host:
   - `CONFIG_SND_SOC_TAS5805M=y` (audio amp)
   - `CONFIG_SND_SOC_RT5680=y` (codec)
   - `CONFIG_SENSORS_INA3221=y` (current monitor)
-  - `CONFIG_VL53L1X=y` (TOF) — confirm from live DTB
+  - ~~`CONFIG_VL53L1X=y` (TOF) — confirm from live DTB~~ — **N/A (2026-07-19 retrospective):** the TOF sensors sit on the STM32 MCU; data arrives over CAN (ids 0x630/0x600, `obstacle_detection` via SocketCAN). No vl53 i2c node exists in the live DTB, and the symbol doesn't exist in either the 4.9 or the 5.10.216 tree. Kernel-side deps (`CAN_RAW`, `GPIO_PCA953X`) are already enabled; Phase-5 verification = CAN data flow.
   - OV7251 / OV13B10 camera drivers — **already ported in zbwu's tree** (`nv_ov13b10.c`/`nv_ov7251.c`, `CONFIG_NV_VIDEO_OV13B10/OV7251=m`); rebase, don't rewrite
   - **`CONFIG_CAN_RAW=y` + `CAN_DEV`/`CAN_BCM`/`CAN_GW` (motor bus)** — ⚠️ **caught 2026-07-08: zbwu's defconfig has only `CONFIG_CAN=y` + `MTTCAN=y`, NOT `CAN_RAW`.** The motor SDK uses raw SocketCAN; without this the bus is silent in Phase 5. Cheap fix, add explicitly. `MTTCAN` (Tegra CAN IP) is already present. See [PHASE1_OFFDEVICE_SCOPING_2026-07-08.md](./PHASE1_OFFDEVICE_SCOPING_2026-07-08.md) §1.
   - Note: zbwu's defconfig uses generic `CONFIG_GPIO_PCA953X=y` for the TCA6424s (covers the tca64xx family) and HID-sensor-hub configs alongside the BMI160 sources — verify the IMU path empirically in Phase 5. **BMI160 CONFIG is absent from zbwu's defconfig (sources present) — enable it.**
-- **NEW — audio codec forward-port (the critical path to Phase 8):** `rt5680` + `tas5805m` from `cyberdog_tegra_kernel` (4.9) → 5.10 ASoC, plus re-authoring the `tegra194-mi-k91-audio.dtsi` nodes onto zbwu's p3668-based DTS (review D5). **Scoped 2026-07-08 — see [PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md): MEDIUM-LOW risk, ~7–12 evenings; standard codec→component conversion (rt5659.c as template) + tegra-alt→audio-graph DT rewrite; upstream v6.1 tas5805m verified as backport alternative. Unknown #3 is bounded.**
-- **NEW — `rtl8821cu` out-of-tree Wi-Fi module** (`morrownr/8821cu-20210916`): stock Wi-Fi is USB RTL8821CU with no in-tree 5.10 driver (review §2.6). Plus `rtl8821c` BT firmware from linux-firmware into the rootfs.
-- **NEW — auto-revert initrd hook:** on root-mount failure, mount the boot-pivot FS, restore `extlinux.conf` from the jp4-saved copy (atomic `rename(2)`), `sync`, `reboot -f`; plus `panic=15` in APPEND. Converts the most likely Phase 4 failure from a 30-min USB rescue into a self-healing reboot (review D5). Rehearse deliberately in Phase 4.
+- **NEW — audio codec forward-port (the critical path to Phase 8):** `rt5680` + `tas5805m` from `cyberdog_tegra_kernel` (4.9) → 5.10 ASoC, plus re-authoring the `tegra194-mi-k91-audio.dtsi` nodes onto zbwu's p3668-based DTS (review D5). **Scoped 2026-07-08 — see [PHASE3_AUDIO_PORT_SCOPING.md](./PHASE3_AUDIO_PORT_SCOPING.md): MEDIUM-LOW risk, ~7–12 evenings; standard codec→component conversion (rt5659.c as template) + tegra-alt→audio-graph DT rewrite *(DT target re-judged 2026-07-19: primary = tegra186-ape custom card, audio-graph demoted to fallback — see §5.6 / PHASE3_AUDIO_PORT_SCOPING fact 4)*; upstream v6.1 tas5805m verified as backport alternative. Unknown #3 is bounded.**
+- **NEW — `rtl8821cu` out-of-tree Wi-Fi module** (`morrownr/8821cu-20210916`): stock Wi-Fi is USB RTL8821CU with no in-tree 5.10 driver (review §2.6). **Done 2026-07-19: defconfig delta 0009 disables the in-tree RTL8821CU — morrownr is the single Wi-Fi driver.** BT firmware corrected (retrospective §四.1): the built kernel uses NVIDIA's `rtk_btusb.ko` (`CONFIG_RTK_BTUSB=m`; mainline `btusb`/`btrtl` NOT built), which requests the **bare files** `/lib/firmware/rtl8821cu_fw` + `rtl8821cu_config` (copy from the JP4 side's `/lib/firmware`) — **NOT** linux-firmware's `rtl_bt/` files.
+- **NEW — auto-revert initrd hook:** on root-mount failure, mount the boot-pivot FS, restore `extlinux.conf` from the jp4-saved copy (atomic `rename(2)`), `sync`, `reboot -f`; plus `panic=15` in APPEND. Converts the most likely Phase 4 failure from a 30-min USB rescue into a self-healing reboot (review D5). Rehearse deliberately in Phase 4. **2026-07-19: `jp5-autorevert-hook.sh` gained a boot-attempt counter (>3 attempts without a success marker → revert), cleared by `jp5-boot-ok.service` (installed from `tools/phase4/`)** — covers the hang/panic-loop failure modes the root-probe alone misses.
 - **Optional, off critical path — PREEMPT_RT:** official on r35.x for Xavier NX (developer-preview): `./kernel-5.10/scripts/rt-patch.sh apply-patches`, rebuild nvdisplay against it (headless operation dodges the display risk). Only after locomotion is stable on the stock kernel (review §3.1).
 - **DTS strategy:** extend zbwu's proven-booting `tegra194-p3668-0001-p2151-0000.dts` (`model = "Xiaomi Cyberdog"`); use stock `tegra194-mi-k91{,-audio,-camera}.dts(i)` from `cyberdog_tegra_kernel` as the wiring oracle. Do **not** attempt a from-scratch mi-k91 port (review §3.2).
-- Built artifacts: `Image`, DTB, initrd with critical drivers baked `=y` + auto-revert hook, out-of-tree `*.ko` (incl. 8821cu), ready for staging to `/boot-jp5/`.
+- Built artifacts: `Image`, DTB, out-of-tree `*.ko` (incl. 8821cu), ready for staging to `/boot-jp5/`. **The initrd deliverable moved to Phase 4 (2026-07-19):** it is built by `tools/phase4/build-jp5-initrd.sh` (busybox shell + auto-revert hook; critical drivers are `=y` so it stays tiny — current build 959,877 B packed) **with a size gate < 7,236,790 B packed**, because cboot silently swaps any oversized initrd for the stock `/boot/initrd` (runbook §3b) — which would evict the auto-revert hook exactly when it's needed.
 
 **Sub-tasks**
 
@@ -355,6 +359,12 @@ On Ubuntu 22.04 host:
 > stub; audio route/mic tuning on real HW (Phase 5.6); `cyberdog_motor_sdk` link
 > check deferred to Phase 5 (SDK not built this pass). `panic=15` + auto-revert
 > to rehearse in Phase 4.
+>
+> **2026-07-19 retrospective follow-ups (done):** `tools/phase3/full-build.sh`
+> now **enforces `LOCALVERSION=-tegra`** (KREL `5.10.216-tegra`; artifacts
+> rebuilt), defconfig delta **0009 disables the in-tree RTL8821CU** (morrownr =
+> the single Wi-Fi driver), and `cyberdog-deltas/nvidia` was **completed to 6
+> patches** (REPRODUCE.md now reproduces the camera + Wi-Fi drivers).
 
 **Time: ~15–25 evenings (45–75 hrs).** Still the biggest phase, but cameras/defconfig are already done in zbwu's tree; audio is the new core work (review D5).
 
@@ -368,18 +378,24 @@ On Ubuntu 22.04 host:
 
 **Deliverables.** Ubuntu 20.04 rootfs (JP5's sample rootfs + `apply_binaries.sh`) on `nvme0n1p2`; JP5 kernel + DTB + initrd in `/boot-jp5/` on **eMMC APP p1** (the boot pivot); SSH accessible.
 
-**Sub-tasks**
+**Sub-tasks** *(sequence replaced 2026-07-19 per the retrospective — [RETROSPECTIVE-2026-07-19.md](./RETROSPECTIVE-2026-07-19.md) H1/H2/H4/H5 + §五)*
 
-1. On x86: `sudo Linux_for_Tegra/apply_binaries.sh` → `Linux_for_Tegra/rootfs/`.
-2. Transfer to dog: with dog booted into JP4.5 (LABEL primary), `rsync -aAXH Linux_for_Tegra/rootfs/ mi@cyberdog:/mnt/p2/`.
-3. Stage kernel + DTB + initrd to `/boot-jp5/` on eMMC APP p1.
-4. Edit `/mnt/p2/etc/fstab`: p2 as `/`, p3 as `/data`.
-5. **Assume no Wi-Fi on first boot** (8821cu is out-of-tree): enable `nv-l4t-usb-device-mode` (RNDIS `192.168.55.1` + `ttyGS0` gadget serial console) in the rootfs **before** first boot — that's the access path. Then install the 8821cu module, copy Wi-Fi creds from Layer 0, configure via NetworkManager.
-6. Reboot → switch to JP5 per the Phase 2 mechanism → watch the USB-gadget console. Expect: cboot → kernel load → mount p2 → systemd-journald → `sshd` up.
-7. **Auto-revert drill:** once JP5 boots, deliberately point `root=` at a bogus partition for one boot and verify the initrd hook restores JP4 automatically (review D5/D6). Re-switch to JP5 afterwards.
-8. Hardening + lifecycle: `pro attach` (Ubuntu Pro free tier → focal ESM to 2030); change every stock password (`pi/123`, `root/123`, `mi` — all community-documented).
+1. **Path-B RCM drill (zero-risk, first act of the night):** clean shutdown → USB cable in → power on → x86 `lsusb` shows `0955:7e19` → power off, boot back to JP4. Proves the last-resort recovery path that PHASE0_RECOVERY_PROCEDURES marks "NOT yet verified".
+2. **Backup roll-call:** SSD attached; sha256 spot-check of layer3 `p01.img` (last verified 2026-04-25) + the layer2 tar; tick the two open §0 boxes in PHASE2_RUNBOOK.
+3. **Stage to eMMC `/boot-jp5/` — an explicit RENAMING copy list** (build-artifact names ≠ stanza names; each target name must match the runbook §2 stanza verbatim):
+   - `Image` → `/boot-jp5/Image`
+   - `jp5-initrd` → `/boot-jp5/initrd` (the only truly dangling name today)
+   - `tegra194-p3668-0001-p2151-0000.dtb` → `/boot-jp5/tegra194-mi-k91.dtb` — **MUST OVERWRITE the stale file already sitting at that path** (a 2026-07-11 byte-copy of the JP4 DTB — silently loadable): skip this copy and the stanza loads the old JP4 DTB with the new 5.10 kernel, zero errors.
 
-**Verification.** `ssh mi@192.168.55.1` on JP5 side works over USB. `uname -r` shows `5.10.x-tegra`. `lsmod` shows expected drivers incl. `8821cu`. `ip a` shows usb0 + wlan0 (+ eth0).
+   After copying, cross-check `ls /boot-jp5/` against the stanza's three lines. Staging re-check: initrd size < 7,236,790 B **and** sha256 matches `jp5-initrd.sha256`. Then **REWRITE the whole `LABEL jp5` stanza** (`LINUX`/`FDT`/`INITRD` → `/boot-jp5/`, `root=/dev/nvme0n1p2`, `APPEND` += `panic=15`). The live jp5 label is a 2026-07-11 proof-mode placeholder (JP4 kernel bytes, stock initrd, root=p1): staging new files without rewriting the stanza boots 5.10 rw onto the JP4 root. Then **REGENERATE the three `*-saved` copies** (the auto-revert hook restores `jp4-saved`) — mandatory: the on-dog `*-saved` copies are Jul-11 vintage and untrustworthy until regenerated here (§10 rollback caveat).
+4. **Boot-switch rescue and boot it once** — prove the escape hatch still works AFTER the extlinux rewrite, BEFORE arming jp5.
+5. **Auto-revert rehearsal BEFORE any rootfs rsync** (p2 still empty): switch `DEFAULT` to jp5, boot once; the guard finds no init on p2 and must flip `DEFAULT` back to jp4. The rehearsal boot's own dmesg is unreadable (the guard reverts and reboots within seconds), so verify with the **post-hoc evidence, read from JP4 after the revert**: (a) `/boot/jp5-revert.log` on the eMMC pivot gained a new REVERT entry carrying the initrd build stamp (`/etc/jp5-initrd.build`) — only OUR initrd writes this, the stock initrd cannot, so the entry itself proves kernel-from-file reached our initrd AND initrd identity; (b) the boot-attempt counter was archived as `jp5-boot-attempts.reverted`; (c) `DEFAULT` is back on jp4/primary. (The dmesg `chosen/linux,initrd-*` size check moves to step ⑧ — the real first boot, where dmesg is readable.) **If the rehearsal does NOT come back:** (i) the x86 laptop sees a USB gadget "CyberDog JP5 initrd" (`0955:7020`) with a responsive ACM shell → that's the guard HOLDing after a failed revert; connect and inspect. (ii) nothing enumerates and the dog doesn't return to JP4 → suspected silent stock-initrd swap or broken initrd with `DEFAULT` stuck on jp5 — do NOT keep power-cycling; use step ①'s rehearsed RCM Path-B recovery. NOTE: the old "point `root=` at a bogus partition" drill does NOT work — the guard probes `nvme0n1p2` directly and never reads `root=`.
+6. **Rootfs:** `apply_binaries.sh` on the x86 laptop → in chroot: the §7 bootloader mask/hold + install `jp5-boot-ok.service` (from `tools/phase4/` — it goes in at this chroot stage, before the rsync to p2 completes the staging) → rsync to p2 → fstab (p2 `/`, p3 `/data` with `nofail`) → `rm -rf` p2's `/lib/modules/5.10.216-tegra` (apply_binaries' stock modules; ours share the same KREL now) → unpack our `modules-5.10.216-tegra.tar.gz` into p2 → copy morrownr `8821cu.ko` into `/lib/modules/5.10.216-tegra/extra/` (it is NOT inside the tarball — it ships as a separate file) → THEN chroot `depmod -a 5.10.216-tegra` → BT firmware (`rtl8821cu_fw` + `rtl8821cu_config` bare files from JP4's `/lib/firmware`) + Wi-Fi creds from Layer 0 → enable USB gadget (RNDIS `192.168.55.1` + `ttyGS0`) as the first access path.
+7. **Real first boot:** START with `boot-switch jp5` again — the ⑤ rehearsal reverted `DEFAULT` to jp4, so without re-arming, the literal sequence hot-reboots straight back into JP4. Then hot reboot from JP4 with the USB cable attached the whole time (Phase-2-proven safe). Any cold power-on: power first, cable second (cold boot with the cable once entered RCM). The gadget console becomes visible from the initrd onwards — cboot/early kernel remain dark (no exposed UART); "no output" beyond ~30 s ⇒ rely on `panic=15` + the boot-attempt counter, do not power-cycle blindly before ~3 min.
+8. **Acceptance:** `ssh mi@192.168.55.1` works; `uname -r` = `5.10.216-tegra`; `lsmod` has `8821cu`; `ip a` has usb0 + wlan0; dmesg `chosen/linux,initrd-*` size == jp5-initrd's actual size, NOT 7,236,790 B = the silent stock swap (this check lives here, moved from ⑤ — only this boot's dmesg is readable); `journalctl` shows `jp5-boot-ok` cleared the attempt counter.
+9. Hardening + lifecycle: change every stock password (`pi/123`, `root/123`, `mi` — all community-documented); `pro attach` (Ubuntu Pro free tier → focal ESM to 2030).
+
+**Verification.** `ssh mi@192.168.55.1` on JP5 side works over USB. `uname -r` shows `5.10.x-tegra`. `lsmod` shows expected drivers incl. `8821cu`. `ip a` shows usb0 + wlan0 (+ eth0). dmesg `chosen/linux,initrd-*` size equals jp5-initrd's actual size — NOT 7,236,790 B, which would mean the silent stock swap (runbook §3b). `journalctl` shows `jp5-boot-ok.service` cleared the boot-attempt counter.
 
 **Rollback.** Switch back per the Phase 2 mechanism (or let the auto-revert hook do it) → fully-working JP4.5.1.
 
@@ -405,6 +421,7 @@ On Ubuntu 22.04 host:
 - **MCUs are power-gated** — zero `/dev/ttyUSB*` exist at idle even on stock (review §2.7). *Prerequisite (do on the JP4 side before Phase 2):* capture the enable sequence — `udevadm monitor` + TCA6424 GPIO states while triggering stand/motion on the stock stack; also chase the unverified `192.168.55.233` "R-domain" community lead. Then, on JP5:
 - Replay the enable sequence; `usb_adapter` (from `cyberdog_misc`) enumerates 3 USB-serial (`/dev/ttyUSB{0,1,2}` → head/body/rear MCUs).
 - `mcu_proto` parses telemetry frames; verify against Phase 0 `dmesg-boot.log` baseline.
+- **Status (2026-07-19):** the pre-Phase-2 `udevadm`+TCA6424 capture was NOT executed — `tools/mcu-capture/start-capture.sh` exists but lacks the TCA6424 GPIO read, and PHASE0_LAYER4_RUNBOOK L267 is still open. Rescheduled to a JP4-side night before/parallel with Phase 4, together with the owner walk test. The R-domain `192.168.55.233` was probed 2026-07-07 (reachable, dropbear); the deep-dive stays in Phase 5.
 
 ### 5.3 BMS
 
@@ -428,6 +445,7 @@ On Ubuntu 22.04 host:
 
 ### 5.6 Audio (deep integration deferred to Phase 8)
 
+- **Sound-card pivot (2026-07-19 retrospective):** primary target = **`nvidia,tegra186-ape` + `nvidia-audio-card,*` DT properties** — r35's documented custom-card path (`tegra_machine_driver.c`). **audio-graph is demoted to fallback:** it ships `status="disabled"` on t194, its `tegra_codecs.c` hardcodes codec special-cases, and its docs are thin. The 4.9→5.10 codec driver conversions (rt5680/tas5805m) are unaffected.
 - `aplay -l` shows TAS5805M card.
 - Simple `arecord` / `aplay` loop works.
 - Mixer state ported from the JP4.5 capture (`asound.state` + amixer dump, harvested 2026-07-11 → forensics). *No Xiaomi UCM profile exists on stock (`/usr/share/alsa/ucm*` — checked); the old "port UCM configs" item aimed at a nonexistent file.*
@@ -456,6 +474,10 @@ Forward-compat has **two** layers (audited 2026-07-09 — [PHASE1_OFFDEVICE_SCOP
 ## 14. Phase 6 — ROS 2 Humble + locomotion port
 
 **Install strategy: source-build ROS 2 Humble on Ubuntu 20.04.** Tier-3 binary coverage gaps will bite in Nav2 + locomotion; source-build once is faster than firefighting later. `colcon --packages-up-to` for iterative builds. *(Re-validated 2026-07: still the standard JP5 path — known pins like setuptools 58.2.0 apply, no new breakage; RoboStack's `robostack-humble` on linux-aarch64 is a maintained fallback for CPU-side nodes only — review §3.1.)*
+
+**Binary reality check (2026-07-19 retrospective §五/§七).** packages.ros.org's focal dist carries **no `ros-humble-*` binaries at all** (Humble binaries are jammy-only), so **foxglove_bridge, Nav2, slam_toolbox, and realsense-ros all go into the source-build workspace**; NVIDIA's Isaac apt focal Humble debs were delisted 2025-06-30 — there is no binary escape hatch. The ~8-night Phase-7 estimate must absorb these builds.
+
+**Build-machine decision (2026-07-19 retrospective §六.1).** PREFERRED: build Humble/Nav2 (all CPU-side packages) **off-device in a focal arm64 container on the Mac** (colima — the same rig that built the kernel), then rsync the `/opt/ros/humble` install-space to the dog; CUDA-dependent packages build on the dog. If building on the dog anyway: enable the eMMC p13 12.9 GB swap partition in the JP5 fstab and limit colcon parallelism (8 GB on Xavier NX OOMs on rclcpp/Fast-DDS/Nav2 otherwise). `dustynv/ros:humble` containers remain the escape hatch.
 
 **Most of the Galactic→Humble port itself happens off-device in Track S** (Phase 1, review D8): ported + walking in `cyberdog_simulator` on x86 before this phase starts. Phase 6 deploys and integrates that result on the dog.
 
@@ -490,7 +512,7 @@ Forward-compat has **two** layers (audited 2026-07-09 — [PHASE1_OFFDEVICE_SCOP
 - `ros2 joy` + `teleop_twist_joy` for an 8BitDo-class gamepad.
 - `cyberdog_vision` / `cyberdog_miloc` ported forward (visual SLAM).
 
-**Time: ~8 evenings (24 hrs).** Low brick risk.
+**Time: ~8 evenings (24 hrs).** Low brick risk. *(2026-07-19: this estimate must now absorb the source builds of Nav2 / slam_toolbox / realsense-ros / foxglove_bridge — no focal Humble binaries exist, see §14; the off-device Mac container build is the mitigation.)*
 
 ## 16. Phase 8 — Voice stack replacement
 
@@ -511,7 +533,7 @@ Pipeline: **mic → openWakeWord ("Hey CyberDog") → VAD → whisper.cpp + Tens
 ## 17. Phase 9 — Phone-app replacement
 
 - **Lichtblick** (browser + desktop; MPL-2.0, actively maintained BMW fork of Foxglove v1) for visualization + control panels. Foxglove Studio v2 is account-gated SaaS now — its free tier is the optional extra, not the foundation (review D12).
-- **foxglove_bridge** (`ros-humble-foxglove-bridge`, MIT, apt-installable) serving Lichtblick; **rosbridge_suite** for the custom web UI.
+- **foxglove_bridge** (MIT, **source-built in the Humble workspace** — focal has no `ros-humble-*` binaries, see §14) serving Lichtblick; **rosbridge_suite** for the custom web UI.
 - Thin custom web UI (React/Vite hosted on-dog via caddy) for one-tap actions: stand, sit, trick-1, trick-2.
 
 **Critical files**

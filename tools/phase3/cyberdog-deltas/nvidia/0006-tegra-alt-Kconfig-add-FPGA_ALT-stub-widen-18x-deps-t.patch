@@ -1,7 +1,8 @@
 From 664eb529b9e7dfbc137ebbceedbeb1b38f0e0c4a Mon Sep 17 00:00:00 2001
 From: CyberDog Port <port@local>
 Date: Sun, 19 Jul 2026 12:37:42 +0800
-Subject: [PATCH] tegra-alt Kconfig: add FPGA_ALT stub + widen 18x deps to t194
+Subject: [PATCH 6/6] tegra-alt Kconfig: add FPGA_ALT stub + widen 18x deps to
+ t194
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

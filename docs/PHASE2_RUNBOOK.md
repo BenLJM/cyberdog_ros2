@@ -21,9 +21,15 @@ for execution purposes. Read `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2 first.
       r35.6.4 `l4t_initrd_flash.sh` — fine-grained. *(r32.5.2 BSP has only
       traditional `flash.sh` + NFS scripts.)*
 - [x] **Phase 0.5 step4 PASSED 2026-07-11**: `FDT`-from-file directly proven
-      (model-string test); `INITRD`-from-file proven (stock uses it). `LINUX`-from-file
-      strongly inferred (same file-loader) — **directly proven by §4.3 below, before
-      any disk change**. *If §4.3 fails, stop and redesign — no surgery.*
+      (model-string test). `INITRD`-from-file works ONLY when the stanza also
+      carries a `LINUX` line — in a LINUX-less stanza this cboot ignores the
+      `INITRD` line entirely (§3b/§7) — and is capped by the ramdisk buffer
+      (~7,236,790 B packed / 16 MiB raw): an oversize initrd is swapped
+      SILENTLY for the stock `/boot/initrd`. (Stock `LABEL primary` has no
+      `LINUX` line, so its initrd load proves nothing about extlinux `INITRD`.)
+      `LINUX`-from-file strongly inferred (same file-loader) — **directly
+      proven by §4.3 below, before any disk change**. *If §4.3 fails, stop and
+      redesign — no surgery.*
 - [ ] Backups verified reachable **on surgery night**: SSD attached, Layer 2 (rootfs
       tar), Layer 3 (`p01.img` = full eMMC APP dump — the boot pivot), Layer 3b
       (QSPI) spot-checked. Rescue drill green. *(SSD was not attached 2026-07-11.)*
@@ -34,8 +40,11 @@ for execution purposes. Read `PHASE0_BOOT_MECHANISM_FINDINGS.md` v2 first.
 - **Boot pivot = eMMC APP p1** `/boot/extlinux/extlinux.conf` (`/dev/mmcblk0p1`).
   The NVMe `/boot/...` copy is decorative — do NOT edit it expecting effect.
 - **`DEFAULT` works** → dual-LABEL switching (flip one word, atomic `rename(2)`).
-- **File-loading**: `INITRD` from file works today; **`FDT` from file PROVEN
-  2026-07-11** (Test 4); `LINUX` inferred — §4.3 proves it directly.
+- **File-loading**: `INITRD` from file works ONLY in a stanza that also has a
+  `LINUX` line (a LINUX-less stanza's `INITRD` is ignored entirely — §3b/§7),
+  and only within the ramdisk buffer (~7,236,790 B packed / 16 MiB raw;
+  oversize is SILENTLY swapped for the stock `/boot/initrd`); **`FDT` from
+  file PROVEN 2026-07-11** (Test 4); `LINUX` inferred — §4.3 proves it directly.
 - eMMC APP p1 is 1.5 GB, ~46 MB used → ample room for `/boot-jp5/`.
 - NVMe p1 shrink floor ≈ 18.5 GB (`resize2fs -P`), target 50 GB → wide margin.
 - Kernel today loads from the eMMC **kernel partition** (p2), not a file
@@ -77,18 +86,44 @@ LABEL jp5
 
 LABEL rescue
       MENU LABEL RESCUE (RAM, JP4 kernel, no NVMe mount)
+      # LINUX+FDT mandatory on this cboot: with no LINUX line it ignores INITRD entirely (§3b)
+      LINUX  /boot/Image
+      FDT    /boot/tegra194-mi-k91.dtb
       INITRD /boot/initrd-rescue
       APPEND ${cbootargs} rw rootwait console=ttyTCU0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0 cyberdog.rescue=1
 ```
 
+> **Blueprint notes (2026-07-19 retrospective).** (a) The rescue stanza's
+> `LINUX /boot/Image` + `FDT` lines are **not optional**: the original blueprint
+> omitted them, but §3b/§7 proved this cboot ignores the extlinux `INITRD` line
+> entirely in a stanza that has no `LINUX` line — rescue only ever booted after
+> commit 203bbef forced file mode via `LINUX /boot/Image` + `FDT`. Never copy a
+> LINUX-less rescue stanza from an older revision of this doc. (b) The
+> `LABEL jp5` stanza above is **THE authoritative Phase-4 target** and requires a
+> **whole-stanza rewrite** when Phase 4 lands: the jp5 label currently live on
+> the dog is the 2026-07-11 proof-mode placeholder (JP4 kernel bytes,
+> `root=/dev/nvme0n1p1`), not this. (c) AS OF 2026-07-19 the dog's three
+> `*-saved` copies are Jul-11 vintage: their rescue stanza predates the Jul-17
+> LINUX-line fix, so restoring any of them silently kills the rescue entry —
+> they are untrustworthy until regenerated per plan §12 ③. Ground truth for
+> the live file is the archived `docs/extlinux-live-2026-07-19.conf` (the live
+> DT is archived too: `docs/dtb-live-jp4-2026-07.dts.gz`).
+
 Switching = `cyberdog-boot-switch {jp4|jp5|rescue}` rewrites the `DEFAULT` word via
 temp-file + `mv` (atomic). Always target the **eMMC APP p1** copy.
 
-*Interim state (2026-07-11):* live file still uses stock `LABEL primary` (=jp4;
-`cyberdog-boot-switch jp4` maps to it automatically), plus staged `LABEL rescue`
-and `LABEL jp5` — the latter currently in **proof mode** (JP4 kernel copy,
-`root=/dev/nvme0n1p1`) until §4.3 passes and real JP5 artifacts replace it. The
-full rename to the layout above happens with the §5 surgery.
+After **any** extlinux.conf change, regenerate the three `*-saved` copies on the
+pivot (`jp4-saved` is what the auto-revert hook restores) and boot-switch rescue
+once to prove the escape hatch before switching to jp5.
+
+*Live state (2026-07-19):* the file still uses the stock label names — the
+full rename to the layout above (primary→jp4 etc.) **never happened**; the §5
+surgery is done and did NOT include it. Live labels remain
+`primary`/`second`/`rescue`/`jp5` (ground truth:
+`docs/extlinux-live-2026-07-19.conf`); `cyberdog-boot-switch jp4` maps to
+`primary` automatically, and `LABEL jp5` is still the 2026-07-11 **proof-mode**
+placeholder (JP4 kernel copy, `root=/dev/nvme0n1p1`). The final renaming, if it
+ever happens, belongs to Phase 4's whole-stanza rewrite.
 
 ## 3. Build the rescue initrd — **DONE 2026-07-11** (zero reboots)
 

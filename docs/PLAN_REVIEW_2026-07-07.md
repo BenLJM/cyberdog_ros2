@@ -205,7 +205,7 @@ Add to Phase 3 build list: `morrownr/8821cu-20210916` (actively maintained, buil
 | r32.5.2 recovery URLs | Both runbook URLs still live (350 MB / 1.49 GB, 200 OK). Mirror them now as well. |
 | **PREEMPT_RT** | Officially supported on r35.x for Xavier NX (developer-preview quality): `./kernel-5.10/scripts/rt-patch.sh apply-patches` in public_sources, then normal build; **nvdisplay must be rebuilt against the RT kernel** (community reports display issues otherwise — headless use unaffected). CUDA userspace unaffected. → optional Phase 3 add-on for the locomotion loop, not on the critical path. |
 | **Ubuntu 20.04** | Standard support **ended 2025-05-31**. ESM (Ubuntu Pro) to **2030**; free personal tier: ≤5 machines, arm64 OK, `esm-apps` covers universe. `pro attach` on L4T focal is community-proven, not Canonical-certified. → Phase 4 gains a `pro attach` step. |
-| **ROS 2 Humble** | EOL **2027-05-31**. Source-build on focal remains the standard JP5 path; no new breakage reported 2025-26 (setuptools 58.2.0 pin etc. still apply); `packages.ros.org/ros2/ubuntu/dists/focal` still serves. Active distros mid-2026: Jazzy (→2029), Kilted, Lyrical (new LTS, 2026-05, →2031). **Both JP5 and Humble are EOL by mid-2027 — the end-state is a frozen-but-modern stack; the forward path afterward is containers (below), and that's fine.** |
+| **ROS 2 Humble** | EOL **2027-05-31**. Source-build on focal remains the standard JP5 path; no new breakage reported 2025-26 (setuptools 58.2.0 pin etc. still apply); `packages.ros.org/ros2/ubuntu/dists/focal` still serves. *[2026-07-19: superseded — the focal dist carries ZERO `ros-humble-*` binary packages (Humble was never built for focal); every such package goes into the source build.]* Active distros mid-2026: Jazzy (→2029), Kilted, Lyrical (new LTS, 2026-05, →2031). **Both JP5 and Humble are EOL by mid-2027 — the end-state is a frozen-but-modern stack; the forward path afterward is containers (below), and that's fine.** |
 | RoboStack | `robostack-humble` channel exists for linux-aarch64, actively maintained (pushed 2026-06-11). A real alternative to source-building for CPU-side ROS, but conda ROS won't link L4T CUDA/TensorRT bits — noted as fallback, not the plan. |
 | **jetson-containers** | Prebuilt `dustynv/ros:humble-*-l4t-r35.{1.0..4.1}` images exist (newest build 2023-12, ~5-6 GB). **On JP5, CUDA/cuDNN/TensorRT live INSIDE the image** (not host-mounted like JP4), and NVIDIA states r35.x images run across r35.x hosts → an r35.4.1 Humble image runs on the r35.6.4 host. nvidia-container-toolkit ships with JP5. → containers become the sanctioned escape hatch for py3.10-era ML tooling and post-Humble ROS. |
 | **PyTorch / ORT on JP5** | Final JP5 PyTorch wheel: **torch 2.1.0 (cp38, CUDA 11.4)** — URL live. onnxruntime-gpu for JP5: **cp38 only** (1.16.0 Jetson Zoo / 1.16.3 ykawa2 GitHub). elinux.org Jetson Zoo is now bot-walled; mirror the wheels too. |
@@ -230,7 +230,7 @@ Add to Phase 3 build list: `morrownr/8821cu-20210916` (actively maintained, buil
 | zbwu ecosystem is frozen but complete-ish | `athena_l4t_sdk` last commit 2022-08-20; 2 pristine forks; no successor project anywhere (GitHub/zhihu/CSDN searches). Sibling repos: `athena_locomotion` (2022-09), `athena_motorcontrol` (branch `gd32f303`), `GD32_SPINE` — the **motor/spine MCUs are GD32F303** (plan §3 says "STM32" for the peripheral MCUs; the motor domain at least is GD32). |
 | MiRoboticsLab: nothing new for CyberDog 1 | v1.3.0 (2024-01-17) remains the last release; post-2024 activity is CyberDog 2 / vision-stack only. Flashing wiki still live and unchanged (flashall.sh + forced-recovery + black cable). |
 | **A 2025 brick case validates the paranoia** | NVIDIA forum (Mar 2025): owner bricked a CyberDog doing a Clonezilla NVMe backup interrupted mid-write; never recovered (thread closed unresolved). Takeaways codified in §4.3: cross-L4T-release cloning fails; eMMC work via `l4t_initrd_flash.sh`; never run block-level tools against the live disk without a plan. Our layered dd/tar backups + rescue drill are exactly the right defense. |
-| **Foxglove → Lichtblick swap** | Foxglove Studio v2 is closed + **account-gated** (free tier: 3 users/5 devices, fine but SaaS-tied). **Lichtblick** (BMW's MPL-2.0 fork): v1.26.0 (2026-06-17), 3–4-week release cadence, desktop + browser, speaks the foxglove-bridge WebSocket protocol. **`foxglove_bridge` is MIT, maintained, and installable as `ros-humble-foxglove-bridge` from apt.** → Phase 9 primary: foxglove_bridge + Lichtblick; Foxglove-free-tier as optional extra. |
+| **Foxglove → Lichtblick swap** | Foxglove Studio v2 is closed + **account-gated** (free tier: 3 users/5 devices, fine but SaaS-tied). **Lichtblick** (BMW's MPL-2.0 fork): v1.26.0 (2026-06-17), 3–4-week release cadence, desktop + browser, speaks the foxglove-bridge WebSocket protocol. **`foxglove_bridge` is MIT, maintained, and installable as `ros-humble-foxglove-bridge` from apt.** *[2026-07-19: superseded — no `ros-humble-*` binaries exist for focal; foxglove_bridge joins the source build.]* → Phase 9 primary: foxglove_bridge + Lichtblick; Foxglove-free-tier as optional extra. |
 | USB gadget console (no disassembly!) | Community docs + tonight's service list (`serial-getty@ttyGS0.service` running): the USB-C download port exposes **RNDIS network (192.168.55.1) AND a gadget serial login console (ttyGS0)** once the kernel is up. Not a cboot console (that's still ttyTCU0, unreachable), but it means a JP5 boot that reaches systemd is debuggable **without Wi-Fi**. Carry the same gadget config into the JP5 rootfs and the rescue initrd. |
 | Misc community intel | Stock creds `pi/123`, `root/123` (change on JP5!). Dreame was the ODM (factory Wi-Fi profiles baked in stock image). XiaoAi endpoints (`access.speech.ai.xiaomi.com`) confirm the voice stack's cloud dependency. One unverified lead: a second SSH-able "R"/MCU domain at `192.168.55.233` (MAVProxyUser notes) — check during Phase 5. |
 
@@ -349,6 +349,9 @@ The kernel work is **smaller and different** than planned:
   `reboot -f`; plus `panic=15` in APPEND. Converts the most likely Phase 4 failure
   (bad rootfs/fstab/driver) from a 30-min USB rescue into self-healing. Rehearse
   deliberately in Phase 4 (point `root=` at a bogus partition once).
+  *[2026-07-19: superseded — the guard as built probes `nvme0n1p2` directly and
+  ignores `root=`, so a bogus `root=` is not a drill; the rehearsal is now the
+  empty-p2 boot, see plan §12 ⑤.]*
 - **DTS strategy** (per §3.2): extend zbwu's `tegra194-p3668-0001-p2151-0000.dts`
   (proven to boot), with stock `mi-k91.dts/dtsi` as the wiring oracle. Do NOT
   attempt a from-scratch mi-k91 port.
@@ -430,7 +433,9 @@ touching the base OS. Keep the *robot* base (locomotion, drivers, bringup) bare-
 
 ### D12 — Phase 9 UI swap: Lichtblick (amends plan §17)
 
-`foxglove_bridge` (MIT, `apt install ros-humble-foxglove-bridge`) + **Lichtblick**
+`foxglove_bridge` (MIT, `apt install ros-humble-foxglove-bridge` *[2026-07-19:
+superseded — focal has no `ros-humble-*` binaries; build it from source with the
+rest of Humble]*) + **Lichtblick**
 (MPL-2.0, v1.26.0 2026-06, 3–4-week cadence, desktop + browser) as the primary UI.
 Foxglove Studio free tier (account-gated SaaS) optional. rosbridge_suite still fine
 for the thin custom web UI. Change stock passwords (`pi/123`, `root/123`, `mi`)

@@ -1,0 +1,27 @@
+From 27dbf8fd7aab92ae3aa4edfee329260512d21484 Mon Sep 17 00:00:00 2001
+From: Zhibin Wu <zbwu86@gmail.com>
+Date: Fri, 3 Jun 2022 21:01:45 +0800
+Subject: [PATCH 5/6] Fixed regulators maybe unavailable, when sensor driver
+ builtin kernel
+
+---
+ drivers/media/platform/tegra/camera/tegracam_core.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/media/platform/tegra/camera/tegracam_core.c b/drivers/media/platform/tegra/camera/tegracam_core.c
+index 04aaa6a..158f9aa 100644
+--- a/drivers/media/platform/tegra/camera/tegracam_core.c
++++ b/drivers/media/platform/tegra/camera/tegracam_core.c
+@@ -136,6 +136,9 @@ int tegracam_device_register(struct tegracam_device *tc_dev)
+ 	}
+ 	tc_dev->s_data = s_data;
+ 	err = tc_dev->sensor_ops->power_get(tc_dev);
++	/* fixed-regulators maybe unavailable, try again later */
++	if (err == -EPROBE_DEFER)
++		return -EPROBE_DEFER;
+ 	if (err) {
+ 		dev_err(dev, "unable to power get\n");
+ 		return -EFAULT;
+-- 
+2.50.1 (Apple Git-155)
+

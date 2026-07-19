@@ -30,3 +30,21 @@ partitions:
     fs: ext4 -L DATA
     uuid: fa0f76a4-1010-43bf-9ee7-b12c3d020360
     partuuid: 6f12055b-c49d-4699-9851-8ef2abf9dab3
+
+# Pinned inputs (plan §9/§19 duty; added 2026-07-19 retrospective).
+# Mirror copies: dog /data/cyberdog-mirror-2026-07 (primary working copy),
+# backup SSD layer4 (verified 2026-07-09/11), Mac build/mirror (3rd, partial).
+# Post-07-11 additions (apt-repo snapshot + voice stack) still need the SSD
+# increment — run tools/replicate-to-ssd.sh next time the SSD is attached.
+pinned_commits:
+  l4t: r35.6.4 (JetPack 5.1.6, kernel 5.10.216; public_sources_r35.6.4.tbz2 in mirror, SHA256SUMS present)
+  kernel_deltas: tools/phase3/cyberdog-deltas (kernel-5.10 x9, jakku-dts x3, nvidia x6 — authoritative, applied with git am)
+  8821cu-20210916 (morrownr, Wi-Fi driver built as 8821cu.ko): 7f63a9d (main)
+  athena_l4t_kernel (zbwu): 82f7a6d3f933 (athena_dev)
+  athena_l4t_nvidia (zbwu): 70143ba0d (athena_dev)
+  athena_l4t_jakku_dts (zbwu): 83797c4 (athena_dev)
+  athena_l4t_sdk (zbwu): 6b4b06a (athena_l4t-r35.1)
+  cyberdog_tegra_kernel (Xiaomi 4.9): e289231f7 (athena)
+  cyberdog_locomotion: ad79bfd (master)   # Track S input
+  cyberdog_ws: b101edd (rolling)          # Track S input
+  cyberdog_motor_sdk: a377ca5 (main)      # plan §11 link-check, Phase 5

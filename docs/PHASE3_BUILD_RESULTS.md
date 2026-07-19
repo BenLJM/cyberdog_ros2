@@ -4,7 +4,12 @@ First JP5 kernel for CyberDog built and verification-gated. Native arm64 build
 on the owner's Apple-silicon Mac (colima + docker, `cyberdog-kbuild` image);
 sources = `public_sources_r35.6.4.tbz2` unpacked, zbwu's r35.1 deltas rebased.
 
-## Artifacts (`build/out/final/`, KREL `5.10.216+`)
+> **2026-07-19 evening addendum**: the artifacts below were REBUILT the same
+> day with `LOCALVERSION=-tegra` after the retrospective
+> (docs/RETROSPECTIVE-2026-07-19.md). See "Rebuild addendum" at the end of
+> this file — the morning `5.10.216+` artifacts are superseded and deleted.
+
+## Artifacts (`build/out/final/`, KREL `5.10.216+`) — SUPERSEDED, see addendum
 
 | File | Size | Verified |
 |---|---|---|
@@ -40,8 +45,20 @@ sources = `public_sources_r35.6.4.tbz2` unpacked, zbwu's r35.1 deltas rebased.
   on failure restores `extlinux.conf` from the jp4-saved copy (atomic rename)
   and reboots. Turns the likely Phase-4 failure into a self-healing power-cycle.
   Pair with `panic=15` in the JP5 APPEND. Rehearse deliberately in Phase 4.
+  *(2026-07-19 evening: substantially rewritten — boot-attempt counter [>3
+  passes without a `jp5-boot-ok.service` clear → revert], verified writes with
+  HOLD-on-failure instead of blind reboot, gadget-console shells; see the
+  current file header and tools/phase4/. This paragraph describes the morning
+  version.)*
 
 ## Audio machine driver — tegra-alt is a DEAD END, use audio-graph (2026-07-19)
+
+> **Superseded later the same day**: the pivot target was re-judged against
+> NVIDIA's r35 source/docs — primary path is now the **`nvidia,tegra186-ape`**
+> custom card (`nvidia-audio-card,*` properties), audio-graph is fallback only
+> (ships `status="disabled"` on t194; `tegra_codecs.c` hardcodes codecs). See
+> plan §5.6 / PHASE3_AUDIO_PORT_SCOPING fact 4. The tegra-alt dead-end
+> analysis below remains valid.
 
 Investigated while trying to make the tegra-alt machine driver build. Chain of
 findings:
@@ -78,4 +95,29 @@ API-correct and reused as-is by either framework.
 ## Reproduce
 
 `build/full-build.sh` inside the `cyberdog-kbuild` container builds Image + dtbs
-+ modules + the 8821cu `.ko` and stages everything to `out/final/`.
++ modules + the 8821cu `.ko` and stages everything to `out/final/`. Full
+from-scratch reproduction (patch series, `git am --keep-cr`, image recipe at
+`tools/phase3/docker/Dockerfile`): see `tools/phase3/REPRODUCE.md`. Fixed
+order: `full-build.sh` first (it wipes `out/final/`), then
+`tools/phase4/build-jp5-initrd.sh`.
+
+## Rebuild addendum (2026-07-19 evening — CURRENT artifacts)
+
+Retrospective-driven rebuild with the hardened `full-build.sh`
+(`LOCALVERSION=-tegra`, `set -euo pipefail`, KREL + vermagic assertions, clean
+`out/final/`, SHA256SUMS) and defconfig delta **0009** (in-tree `RTL8821CU`
+disabled — it built a `.ko` with the SAME name `8821cu.ko` as the morrownr
+driver for the same USB ID 0bda:c820; morrownr is now the single Wi-Fi
+driver; `CONFIG_RTK_BTUSB` Bluetooth unaffected and present).
+
+| File | Size | Verified |
+|---|---|---|
+| `Image` | 33,888,768 B | KREL `5.10.216-tegra` (asserted in-build) |
+| `tegra194-p3668-0001-p2151-0000.dtb` | 317,729 B | staged to `/boot-jp5/tegra194-mi-k91.dtb` (rename!) |
+| `modules/8821cu.ko` | 4,321,168 B | vermagic `5.10.216-tegra SMP preempt …` (asserted) |
+| `modules-5.10.216-tegra.tar.gz` | 87,989,260 B | 46 modules incl. rt5680/tas5805m codecs, nv_ov7251/nv_ov13b10, rtk_btusb; NO in-tree 8821cu |
+| `jp5-initrd` | 961,042 B | dual size gates vs the 7,236,790 B cboot envelope; busybox + gadget console + auto-revert guard |
+
+`SHA256SUMS` + `jp5-initrd.sha256` accompany the artifacts. Staged on the dog
+at `/data/jp5-build-2026-07-19-tegra/` (the morning `5.10.216+` set is
+deleted). BMI160 is `=y` (builtin — correctly absent from the module list).
