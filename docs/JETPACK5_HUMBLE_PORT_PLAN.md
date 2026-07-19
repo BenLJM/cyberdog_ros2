@@ -344,6 +344,18 @@ On Ubuntu 22.04 host:
 
 **Verification.** Clean build; `file Image` arm64; DTB decompiles via `dtc`; no missing symbols from `cyberdog_motor_sdk` link.
 
+> **✅ FIRST BUILD DONE 2026-07-19 — see [PHASE3_BUILD_RESULTS.md](./PHASE3_BUILD_RESULTS.md).**
+> Image (arm64 ✅), CyberDog DTB (`dtc` round-trips ✅, sound node present), 8821cu
+> `.ko` (vermagic-matched ✅), full module set incl. converted `snd-soc-rt5680.ko`
+> + `snd-soc-tas5805m.ko`. Built native-arm64 on the Mac (colima/docker), zbwu's
+> 12 deltas rebased onto r35.6.4, `CAN_RAW` + audio stack added to the defconfig,
+> both codecs converted 4.9→5.10 component API (DSP table byte-identical), audio
+> DT on the tegra-alt t186ref machine driver, auto-revert hook authored. Open
+> follow-ups (none blocking Phase 4 staging): tegra-alt machine-driver Kconfig
+> stub; audio route/mic tuning on real HW (Phase 5.6); `cyberdog_motor_sdk` link
+> check deferred to Phase 5 (SDK not built this pass). `panic=15` + auto-revert
+> to rehearse in Phase 4.
+
 **Time: ~15–25 evenings (45–75 hrs).** Still the biggest phase, but cameras/defconfig are already done in zbwu's tree; audio is the new core work (review D5).
 
 **Risks**

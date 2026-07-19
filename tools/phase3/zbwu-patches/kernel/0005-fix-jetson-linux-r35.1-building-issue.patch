@@ -1,0 +1,32 @@
+From bf9c2b3f47a97f9cc8435b3d7ebe75a7c44d0b9a Mon Sep 17 00:00:00 2001
+From: Zhibin Wu <zbwu86@gmail.com>
+Date: Sat, 20 Aug 2022 22:20:42 +0800
+Subject: [PATCH 5/5] fix jetson linux r35.1 building issue
+
+---
+ arch/arm64/configs/athena_defconfig | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/arch/arm64/configs/athena_defconfig b/arch/arm64/configs/athena_defconfig
+index ab86cf56869a..80c1acdeb9fe 100644
+--- a/arch/arm64/configs/athena_defconfig
++++ b/arch/arm64/configs/athena_defconfig
+@@ -229,7 +229,6 @@ CONFIG_BATTERY_BQ27XXX=y
+ CONFIG_SENSORS_PWM_FAN=y
+ CONFIG_SENSORS_INA3221=y
+ CONFIG_GPIO_TACHOMETER=y
+-CONFIG_GENERIC_PWM_TACHOMETER=y
+ CONFIG_THERMAL_WRITABLE_TRIPS=y
+ CONFIG_THERMAL_GOV_POWER_ALLOCATOR=y
+ CONFIG_CPU_THERMAL=y
+@@ -344,7 +343,6 @@ CONFIG_TEGRA_FSICOM=y
+ CONFIG_TEGRA_DCE=y
+ CONFIG_TEGRA_ISOMGR=y
+ CONFIG_TEGRA_ISOMGR_SYSFS=y
+-CONFIG_TEGRA_VPR=y
+ CONFIG_TEGRA_SPE=y
+ CONFIG_TEGRA_SPE_HSP_MBOX_CLIENT=y
+ CONFIG_TEGRA_CENTRAL_ACTMON=y
+-- 
+2.50.1 (Apple Git-155)
+
