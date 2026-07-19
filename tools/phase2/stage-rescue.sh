@@ -1,4 +1,16 @@
 #!/bin/bash
+# ############################################################################
+# SUPERSEDED 2026-07-16 by the TWO-STAGE layout — do not run this script.
+# It predates the split and would install ONLY the stage-1 loader without the
+# stage-2 bundle: a rescue boot would then land in stage-1's fallback path
+# instead of the full rescue system. The canonical install path is now
+# arm-and-go.sh steps 1-3 (builds, verifies and installs BOTH artifacts).
+# The LABEL work this script did on 2026-07-11 is already live on the pivot.
+# ############################################################################
+echo "SUPERSEDED: use arm-and-go.sh (installs stage-1 + bundle). See header." >&2
+exit 1
+
+# ---- original script kept below for history ----
 # Phase 2 §3.2–3.3 — stage the rescue boot path onto eMMC APP p1. ADDITIVE ONLY:
 #   + /boot/initrd-rescue                     (new file)
 #   + LABEL rescue appended to extlinux.conf  (DEFAULT stays primary)

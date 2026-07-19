@@ -1,0 +1,32 @@
+# CyberDog 1 — NVMe layout after the Phase 2 offline surgery (2026-07-19 01:15 CST)
+# Executed from the two-stage rescue initramfs; log: /boot/phase2-surgery.log on eMMC APP p1.
+# p1 filesystem grow accepted at 13,107,200 4K blocks (50.00 GiB even; resize2fs
+# rounding, ~1 MiB slack inside the partition — harmless, documented).
+disk: /dev/nvme0n1
+model: Phison CFESL128GTLG9-I3C-1  # 250,069,680 x 512B sectors (119.2 GiB)
+gpt_guid: 1A34C55D-D075-48A9-B449-EB69FE088B5B
+partitions:
+  p1:
+    name: APP
+    role: JP4.5 rootfs (stock, shrunk offline 119.2G -> 50G)
+    sectors: 40-104859647
+    size: 50.0 GiB
+    fs: ext4 (13107200 x 4K blocks, e2fsck clean)
+    uuid: 52078a8d-470a-44f5-9a9f-eb86c76ae678
+    partuuid: 0d799f10-bc04-4d32-af66-771fd6147249   # preserved from factory
+  p2:
+    name: JP5_ROOT
+    role: JP5.1.6 rootfs (empty, awaiting Phase 4)
+    sectors: 104859648-209717247
+    size: 50.0 GiB
+    fs: ext4 -L JP5_ROOT
+    uuid: 81fb4c00-f0ed-4d0c-832b-5799db784b88
+    partuuid: acc0a57e-a90f-401f-9e10-e1619c287718
+  p3:
+    name: DATA
+    role: shared /data (mounted by JP4 via fstab; JP5 later)
+    sectors: 209717248-250069647
+    size: 19.2 GiB
+    fs: ext4 -L DATA
+    uuid: fa0f76a4-1010-43bf-9ee7-b12c3d020360
+    partuuid: 6f12055b-c49d-4699-9851-8ef2abf9dab3

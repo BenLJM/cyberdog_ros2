@@ -59,7 +59,17 @@ gate_tools() {
     return 0
 }
 gate_unmounted() { ! grep -q nvme /proc/mounts; }
-gate_rescue_env() { grep -q 'cyberdog.rescue=1' /proc/cmdline; }
+# the APPEND marker alone is spoofable by a cboot-fallback JP4 boot (2026-07-12);
+# additionally require / to actually be RAM (rootfs = monolithic initramfs,
+# tmpfs = two-stage switch_root target). On such a fallback boot / is /dev/root
+# (ext4 on NVMe) and gate_unmounted's string match would miss it.
+gate_rescue_env() {
+    grep -q 'cyberdog.rescue=1' /proc/cmdline || return 1
+    case "$(awk '$2=="/"{print $3; exit}' /proc/mounts)" in
+        rootfs|tmpfs) return 0 ;;
+        *) echo "rootfs is not RAM-backed"; return 1 ;;
+    esac
+}
 
 if [ "${1:-}" = --selftest ]; then
     echo "selftest on live system:"
@@ -111,8 +121,16 @@ for i in $(seq 20); do [ -b "$P2" ] && [ -b "$P3" ] && break; sleep 1; done
 
 step "S7 grow p1 filesystem to fill partition + fsck"
 resize2fs "$P1" || fail "resize2fs grow failed"
-dumpe2fs -h "$P1" 2>/dev/null | grep -q "^Block count: *$FINAL_BLOCKS\$" \
-    || fail "post-grow block count != $FINAL_BLOCKS"
+# 2026-07-19 EXECUTED-RUN LESSON: resize2fs grew to 13,107,200 blocks (50.00
+# GiB even), NOT the arithmetic maximum 13,107,451 — the tool rounds by its
+# own rules and ~1 MiB of partition tail stays unused (harmless). The old
+# exact-match check aborted a healthy surgery here. Accept a bounded range:
+# must be > the interim shrink size and <= the arithmetic maximum.
+GROWN=$(dumpe2fs -h "$P1" 2>/dev/null | sed -n 's/^Block count: *//p')
+[ -n "$GROWN" ] || fail "cannot read post-grow block count"
+[ "$GROWN" -gt "$SHRINK_BLOCKS" ] || fail "post-grow count $GROWN did not grow past $SHRINK_BLOCKS"
+[ "$GROWN" -le "$FINAL_BLOCKS" ] || fail "post-grow count $GROWN exceeds partition capacity $FINAL_BLOCKS"
+echo "   grown to $GROWN blocks (max $FINAL_BLOCKS; slack $((FINAL_BLOCKS - GROWN)) blocks accepted)"
 e2fsck -f -y "$P1"; rc=$?
 [ "$rc" -le 1 ] || fail "post-grow fsck rc=$rc"
 

@@ -114,6 +114,33 @@ the initrd's own libs; scripts `bash -n` clean; installed sha256 matches build.
 Artifact: 26 MB unpacked / 12 MB gz at `/boot/initrd-rescue` on the pivot;
 `LABEL rescue` live; `extlinux.conf.{stock,jp4,rescue}-saved` in place.
 
+### 3b. TWO-STAGE redesign (2026-07-12 incident → fixed 2026-07-16/17)
+
+The first armed boot (2026-07-12 00:43) proved **cboot's ramdisk buffer cannot
+hold the 13 MB monolithic initrd**: cboot silently loaded the stock
+`/boot/initrd` instead (DT `chosen/linux,initrd-*` = exactly 7,236,790 B =
+stock size; QSPI cboot strings contain `Ramdisk size ... greater than
+allocated size`) while still applying the rescue `APPEND` — the dog booted
+plain JP4 with `cyberdog.rescue=1` in cmdline and the surgery never started
+(flag unconsumed; fail-open). Proven-safe envelope = the stock initrd:
+**7,236,790 B packed / ~16 MB raw**.
+
+Fix: split into **stage-1 loader** (`/boot/initrd-rescue`, ~0.9 MB busybox +
+`/init`; the only file cboot loads; hard size-gated `< stock` at build AND
+arm time) + **stage-2 bundle** (`/boot/rescue-bundle.cpio.gz`, the full
+previous rescue system, sha256-pinned inside stage-1, unpacked into a tmpfs
+and `switch_root`ed into). Stage-1 fallback matrix keyed on
+`phase2-surgery.STARTED` (written by `rescue-autorun` in the same verified
+transaction that consumes the arm flag): `SUCCESS`→JP4, flag intact→defuse to
+`.stale`+JP4, `STARTED` w/o `SUCCESS`→HOLD (never touches NVMe; shells on
+ttyTCU0+console), none→JP4. Decisions logged to kmsg (`rescue-s1:`) and
+`/boot/phase2-stage1.log` on the pivot. Two adversarial multi-agent review
+rounds (24 findings) preceded re-arming; notable kills: **`mkfs.ext4` was
+missing from the bundle since day one** (gate_tools would have aborted every
+armed surgery at the gates) and a dangling-symlink `[ -x /newroot/sbin/init ]`
+check that would have inverted every JP4 fallback into HOLD. Details:
+`tools/phase2/README.md`.
+
 ## 4. Rehearse switching + rescue BEFORE any disk change
 
 **Staging DONE 2026-07-11 (no reboots yet):** `cyberdog-boot-switch` installed to
@@ -183,8 +210,16 @@ p2 = sectors **104,859,648–209,717,247** (50 GiB, aligned); p3 = **209,717,248
 
 ## 7. Verification gate (before Phase 3)
 
-- [ ] `cyberdog-boot-switch {jp4,rescue}` both boot; switching is atomic across repeated cycles.
-- [ ] Offline resize left JP4 fully functional (walks, all services).
-- [ ] p2/p3 exist, formatted, UUIDs recorded.
-- [ ] Rescue initrd reachable over USB gadget without Wi-Fi.
-- [ ] Tag `v0.1-phase2-dualboot` (name per plan §21's tag ladder).
+- [x] `cyberdog-boot-switch {jp4,rescue}` both boot; switching is atomic across
+      repeated cycles. *(2026-07-17..19: primary↔rescue flipped 6+ times through
+      arm/disarm/rehearsal/surgery; every landing matched the DEFAULT set.
+      NOTE: rescue boots ONLY since the `LINUX /boot/Image` line was added —
+      without a LINUX line this cboot ignores extlinux INITRD entirely, §3b.)*
+- [x] Offline resize left JP4 fully functional (all services; boots clean, only
+      the pre-existing stock unit failures). *(Walk test still owner's to run —
+      services incl. locomotion stack start normally.)*
+- [x] p2/p3 exist, formatted, UUIDs recorded. *(docs/MANIFEST.yaml, 2026-07-19)*
+- [x] Rescue initrd reachable over USB gadget without Wi-Fi. *(2026-07-18/19:
+      entire surgery night driven over ttyACM serial + RNDIS after Wi-Fi
+      dropped; gadget survived the full session.)*
+- [x] Tag `v0.1-phase2-dualboot` (name per plan §21's tag ladder).

@@ -20,9 +20,20 @@ LOG="$M/boot/phase2-surgery.log"
 exec >> "$LOG" 2>&1
 echo "===================================================================="
 echo "rescue-autorun: armed boot detected ($(date 2>/dev/null))"
-echo "consuming arm flag (one attempt only)"
+echo "consuming arm flag (one attempt only); STARTED marker written first so"
+echo "stage-1 can distinguish mid-surgery power loss (HOLD) from never-armed (JP4)"
+# VERIFIED transaction: refuse surgery if the pivot won't take our markers —
+# proceeding without STARTED (or with a live flag) breaks stage-1's matrix.
+touch "$M/boot/phase2-surgery.STARTED" && sync && [ -f "$M/boot/phase2-surgery.STARTED" ] || {
+    echo "rescue-autorun: cannot write STARTED marker — refusing surgery" | tee /dev/kmsg
+    exit 1     # flag left intact; dog stays in rescue with sshd for diagnosis
+}
 rm -f "$FLAG"
 sync
+[ ! -f "$FLAG" ] || {
+    echo "rescue-autorun: cannot consume arm flag (pivot read-only?) — refusing surgery" | tee /dev/kmsg
+    exit 1
+}
 
 echo "rescue-autorun: starting surgery (also logged here)" > /dev/kmsg
 /sbin/rescue-surgery
