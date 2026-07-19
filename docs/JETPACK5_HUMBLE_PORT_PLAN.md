@@ -380,6 +380,22 @@ On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 
 **Sub-tasks** *(sequence replaced 2026-07-19 per the retrospective — [RETROSPECTIVE-2026-07-19.md](./RETROSPECTIVE-2026-07-19.md) H1/H2/H4/H5 + §五)*
 
+> **STATUS 2026-07-19 evening — step ③ EXECUTED remotely (dog on JP4, DEFAULT
+> untouched):** `/boot-jp5/` staged with the renaming list below (all three
+> sha256-verified, initrd 961,042 B < gate), whole `LABEL jp5` stanza rewritten
+> to this section's authoritative form, three `*-saved` copies REGENERATED
+> 19:42 (jp4-saved == live, bodies verified identical, rescue stanza carries
+> the LINUX line). Pre-change backup: `extlinux.conf.pre-phase4-20260719` on
+> the pivot. BT firmware staged at `/data/jp5-build-2026-07-19-tegra/
+> bt-firmware/` (extracted from the 4.9-tree and zbwu-sdk mirrors — byte-
+> identical sources, SHA256SUMS included), so step ⑥ no longer needs JP4's
+> live `/lib/firmware`. **Owner decision 2026-07-19: the JP4-side walk test is
+> CANCELLED** (accepted: post-Phase-2 locomotion regressions can no longer be
+> attributed to the shrink vs later changes) **and the MCU enable-sequence
+> capture is deferred to Phase 5** (window stays open while JP4 remains
+> bootable on p1). The backup roll-call (step ②) remains in the laptop night.
+> Remaining for the laptop night: ①②④⑤⑥⑦⑧⑨.
+
 1. **Path-B RCM drill (zero-risk, first act of the night):** clean shutdown → USB cable in → power on → x86 `lsusb` shows `0955:7e19` → power off, boot back to JP4. Proves the last-resort recovery path that PHASE0_RECOVERY_PROCEDURES marks "NOT yet verified".
 2. **Backup roll-call:** SSD attached; sha256 spot-check of layer3 `p01.img` (last verified 2026-04-25) + the layer2 tar; tick the two open §0 boxes in PHASE2_RUNBOOK.
 3. **Stage to eMMC `/boot-jp5/` — an explicit RENAMING copy list** (build-artifact names ≠ stanza names; each target name must match the runbook §2 stanza verbatim):
