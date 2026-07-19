@@ -41,14 +41,34 @@ sources = `public_sources_r35.6.4.tbz2` unpacked, zbwu's r35.1 deltas rebased.
   and reboots. Turns the likely Phase-4 failure into a self-healing power-cycle.
   Pair with `panic=15` in the JP5 APPEND. Rehearse deliberately in Phase 4.
 
-## Known follow-ups for Phase 4/5 (none block staging)
+## Audio machine driver — tegra-alt is a DEAD END, use audio-graph (2026-07-19)
 
-- **tegra-alt machine-driver Kconfig gap**: `tegra_t186ref_alt.c` is gated by
-  `SND_SOC_TEGRA_T186REF_FPGA_ALT`, which has **no Kconfig entry** (Makefile-only)
-  — `olddefconfig` strips it, so the machine-driver `.ko` is not yet in the set.
-  Add a Kconfig stub (or repoint the Makefile gate to `SND_SOC_TEGRA_T186REF_ALT`)
-  before audio bring-up. The codecs + DTB are ready; only the card-binding
-  driver config is pending.
+Investigated while trying to make the tegra-alt machine driver build. Chain of
+findings:
+1. `tegra_t186ref_alt.c` is gated by `SND_SOC_TEGRA_T186REF_FPGA_ALT`, which had
+   **no Kconfig entry** (Makefile-only). Added the stub + widened the driver's
+   `ARCH_TEGRA_18x_SOC` deps to also allow `ARCH_TEGRA_194_SOC` (commit in
+   kernel/nvidia). Necessary but not sufficient.
+2. kernel-5.10's `sound/soc/Kconfig`/`Makefile` don't source the nvidia
+   `tegra-alt` overlay at all → the configs never resolved. Wired it in
+   (symlink + source/obj lines) and the configs then resolved.
+3. **Full `make modules` then FAILED**: the entire r35.1 tegra-alt subsystem
+   (`utils/tegra_pcm_alt.c` + ~20 driver files) uses the pre-4.18 ASoC API
+   removed in 5.10 — `struct snd_soc_platform`, `snd_soc_pcm_runtime.{platform,
+   cpu_dai}`, `dma_mmap_writecombine`. Porting all of it is the same
+   component-API surgery the two codecs got, ×20, for **downstream/legacy**
+   code that mainline replaced with audio-graph. zbwu never forward-ported it.
+
+**Decision: pivot the audio card to the mainline audio-graph stack**
+(`nvidia,tegra186-audio-graph-card`), which already builds clean here
+(`snd-soc-tegra-audio-graph-card.ko` is in the module set). The tegra-alt
+overlay was reverted (tree builds clean again); the Kconfig stub is kept for the
+record. The committed `tegra194-mi-k91-audio.dtsi` now carries a PLACEHOLDER
+header — the DTB compiles (data only, **no Phase-4 boot impact**), but re-authoring
+the card in audio-graph `ports`/`endpoints` form (plus adding graph OF endpoints
+to the rt5680/tas5805m codec nodes+drivers) is **Phase 5.6**, where route/mic
+binding needs the real hardware anyway. The two codec drivers themselves are
+API-correct and reused as-is by either framework.
 - **Audio route/mic-channel tuning**: `nvidia,audio-routing` carried verbatim
   from the live DT; DAPM route-name binding + 6-mic channel order need the real
   hardware (`dmesg`/`aplay -l`/`amixer` loop) — Phase 5.6, as scoped.
