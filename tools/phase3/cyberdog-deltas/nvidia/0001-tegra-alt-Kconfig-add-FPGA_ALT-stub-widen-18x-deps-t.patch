@@ -1,0 +1,56 @@
+From 664eb529b9e7dfbc137ebbceedbeb1b38f0e0c4a Mon Sep 17 00:00:00 2001
+From: CyberDog Port <port@local>
+Date: Sun, 19 Jul 2026 12:37:42 +0800
+Subject: [PATCH] tegra-alt Kconfig: add FPGA_ALT stub + widen 18x deps to t194
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Correct-in-principle base fix (the Makefile gated the t186ref machine driver
+on a config with no Kconfig entry). Necessary but NOT sufficient: the subsystem
+still won't compile on 5.10 without a full legacy-ASoC port — see the audio DT
+placeholder note. Kept for the record / in case tegra-alt is ever forward-ported.
+---
+ sound/soc/tegra-alt/Kconfig | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/tegra-alt/Kconfig b/sound/soc/tegra-alt/Kconfig
+index eed57b8..a2017b6 100644
+--- a/sound/soc/tegra-alt/Kconfig
++++ b/sound/soc/tegra-alt/Kconfig
+@@ -3,7 +3,7 @@ if SND_SOC
+ config SND_SOC_TEGRA_ALT_186
+ 	def_bool y
+ 	depends on SND_SOC_TEGRA_ALT
+-	depends on ARCH_TEGRA_18x_SOC
++	depends on ARCH_TEGRA_18x_SOC || ARCH_TEGRA_194_SOC
+ 
+ config SND_SOC_TEGRA186_DSPK_ALT
+ 	tristate
+@@ -17,6 +17,14 @@ config SND_SOC_TEGRA186_ARAD_ALT
+ 	tristate
+ 	depends on SND_SOC_TEGRA_ALT && SND_SOC_TEGRA_ALT_186
+ 
++config SND_SOC_TEGRA_T186REF_FPGA_ALT
++	tristate "SoC Audio support for T186Ref generic machine driver"
++	depends on SND_SOC_TEGRA_T186REF_ALT
++	help
++	  Builds machine_drivers/tegra_t186ref_alt.c (compatible
++	  "nvidia,tegra-audio-t186ref"). The config name is historical and was
++	  Makefile-only until this entry. Used by CyberDog mi-k91 (t194).
++
+ config SND_SOC_TEGRA_T186REF_P4573_ALT
+ 	tristate "SoC Audio support for P4573 with CS53L30 and RT5658"
+ 	depends on SND_SOC_TEGRA_T186REF_ALT
+@@ -151,7 +159,7 @@ config SND_SOC_TEGRA_T210REF_ALT
+ config SND_SOC_TEGRA_T186REF_ALT
+ 	tristate "SoC Audio support for T186Ref"
+ 	depends on SND_SOC_TEGRA_ALT
+-	depends on ARCH_TEGRA_18x_SOC
++	depends on ARCH_TEGRA_18x_SOC || ARCH_TEGRA_194_SOC
+ 	select SND_SOC_TEGRA210_XBAR_ALT
+ 	select SND_SOC_TEGRA210_PCM_ALT
+ 	select SND_SOC_TEGRA210_ADMA_ALT
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,62 @@
+From a476c6f690e8347ed22db52a40f0b5421c98290c Mon Sep 17 00:00:00 2001
+From: CyberDog Port <port@local>
+Date: Sun, 19 Jul 2026 11:34:09 +0800
+Subject: [PATCH 6/8] athena_defconfig: add CAN_RAW/SocketCAN, BMI160_I2C,
+ GPIO_TEGRA186, r35 audio-graph stack
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Gaps identified in PHASE1_OFFDEVICE_SCOPING §1: CAN_RAW absence would have
+silenced the motor bus in Phase 5; audio stack mirrored from r35.6.4
+tegra_defconfig (codec entries RT5680/TAS5805M follow with the audio port).
+---
+ arch/arm64/configs/athena_defconfig | 35 +++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/arch/arm64/configs/athena_defconfig b/arch/arm64/configs/athena_defconfig
+index 80c1acdeb..8108d6da2 100644
+--- a/arch/arm64/configs/athena_defconfig
++++ b/arch/arm64/configs/athena_defconfig
+@@ -447,3 +447,38 @@ CONFIG_WQ_WATCHDOG=y
+ CONFIG_SCHEDSTATS=y
+ CONFIG_STACK_TRACER=y
+ CONFIG_PID_IN_CONTEXTIDR=y
++# ---- CyberDog r35.6.4 additions (2026-07-19) ----
++# Motor bus: raw SocketCAN userspace (silent gap caught 2026-07-08)
++CONFIG_CAN_RAW=y
++CONFIG_CAN_BCM=y
++CONFIG_CAN_GW=y
++CONFIG_CAN_DEV=y
++# IMU (live 4.9 uses BMI160_I2C=y)
++CONFIG_BMI160_I2C=y
++# Base platform GPIO (absent in zbwu seed)
++CONFIG_GPIO_TEGRA186=y
++# r35 audio-graph stack, mirrored from r35.6.4 tegra_defconfig
++CONFIG_SND_ALOOP=m
++CONFIG_SND_HDA_TEGRA=m
++CONFIG_SND_HDA_CODEC_HDMI=m
++CONFIG_SND_USB_AUDIO=y
++CONFIG_SND_SOC_TEGRA=m
++CONFIG_SND_SOC_TEGRA210_AHUB=m
++CONFIG_SND_SOC_TEGRA210_DMIC=m
++CONFIG_SND_SOC_TEGRA210_I2S=m
++CONFIG_SND_SOC_TEGRA186_DSPK=m
++CONFIG_SND_SOC_TEGRA210_ADMAIF=m
++CONFIG_SND_SOC_TEGRA186_ARAD=m
++CONFIG_SND_SOC_TEGRA186_ASRC=m
++CONFIG_SND_SOC_TEGRA210_AMX=m
++CONFIG_SND_SOC_TEGRA210_ADX=m
++CONFIG_SND_SOC_TEGRA210_MIXER=m
++CONFIG_SND_SOC_TEGRA210_SFC=m
++CONFIG_SND_SOC_TEGRA210_MVC=m
++CONFIG_SND_SOC_TEGRA210_AFC=m
++CONFIG_SND_SOC_TEGRA210_IQC=m
++CONFIG_SND_SOC_TEGRA210_OPE=m
++CONFIG_SND_SOC_TEGRA210_AUDIO=m
++CONFIG_SND_SOC_TEGRA_AUDIO_GRAPH_CARD=m
++CONFIG_SND_SIMPLE_CARD=m
++CONFIG_SND_AUDIO_GRAPH_CARD=m
+-- 
+2.50.1 (Apple Git-155)
+

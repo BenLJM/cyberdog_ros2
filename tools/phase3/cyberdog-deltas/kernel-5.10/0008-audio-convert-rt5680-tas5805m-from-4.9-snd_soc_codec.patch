@@ -1,0 +1,556 @@
+From 4f3e13d118a8b11294882d5b8dae41e3d0a03adb Mon Sep 17 00:00:00 2001
+From: CyberDog Port <port@local>
+Date: Sun, 19 Jul 2026 11:44:40 +0800
+Subject: [PATCH 8/8] audio: convert rt5680 + tas5805m from 4.9 snd_soc_codec
+ to 5.10 component API
+
+Mechanical legacy-API->component-API conversion (multi-agent, cross-reviewed,
+each compile-verified to a clean .o):
+- snd_soc_codec_driver -> snd_soc_component_driver (flattened .component_driver
+  sub-struct; added idle_bias_on/use_pmdown_time/endianness/non_legacy_dai_naming)
+- snd_soc_register_codec -> devm_snd_soc_register_component
+- snd_soc_read/write/update_bits/*_get_drvdata -> component equivalents
+  (snd_soc_component_read returns the value directly in 5.10)
+- rt5680: probe/remove/suspend/resume/set_bias_level -> component signatures
+- tas5805m: .digital_mute -> .mute_stream(dai,mute,dir) + no_capture_mute
+All register tables, DAPM widgets/routes, and the 1740-line tas5805m_basic.h
+DSP tuning table are byte-for-byte unchanged (verified via git diff --stat).
+---
+ sound/soc/codecs/rt5680.c   | 119 +++++++++++++++++-------------------
+ sound/soc/codecs/rt5680.h   |   6 +-
+ sound/soc/codecs/tas5805m.c | 107 ++++++++++++++++----------------
+ 3 files changed, 113 insertions(+), 119 deletions(-)
+
+diff --git a/sound/soc/codecs/rt5680.c b/sound/soc/codecs/rt5680.c
+index 3cd67e664..7c2193852 100644
+--- a/sound/soc/codecs/rt5680.c
++++ b/sound/soc/codecs/rt5680.c
+@@ -816,7 +816,7 @@ static const struct reg_default rt5680_reg[] = {
+ static int rt5680_dsp_mode_i2c_write_addr(struct rt5680_priv *rt5680,
+ 		unsigned int addr, unsigned int value, unsigned int opcode)
+ {
+-	struct snd_soc_codec *codec = rt5680->codec;
++	struct snd_soc_component *component = rt5680->component;
+ 	int ret;
+ 
+ 	mutex_lock(&rt5680->dsp_lock);
+@@ -824,35 +824,35 @@ static int rt5680_dsp_mode_i2c_write_addr(struct rt5680_priv *rt5680,
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_ADDR_MSB,
+ 		addr >> 16);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set addr msb value: %d\n", ret);
++		dev_err(component->dev, "Failed to set addr msb value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_ADDR_LSB,
+ 		addr & 0xffff);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set addr lsb value: %d\n", ret);
++		dev_err(component->dev, "Failed to set addr lsb value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_DATA_MSB,
+ 		value >> 16);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set data msb value: %d\n", ret);
++		dev_err(component->dev, "Failed to set data msb value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_DATA_LSB,
+ 		value & 0xffff);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set data lsb value: %d\n", ret);
++		dev_err(component->dev, "Failed to set data lsb value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_OP_CODE,
+ 		opcode);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set op code value: %d\n", ret);
++		dev_err(component->dev, "Failed to set op code value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+@@ -874,7 +874,7 @@ err:
+ static int rt5680_dsp_mode_i2c_read_addr(
+ 	struct rt5680_priv *rt5680, unsigned int addr, unsigned int *value)
+ {
+-	struct snd_soc_codec *codec = rt5680->codec;
++	struct snd_soc_component *component = rt5680->component;
+ 	int ret;
+ 	unsigned int msb, lsb;
+ 
+@@ -883,21 +883,21 @@ static int rt5680_dsp_mode_i2c_read_addr(
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_ADDR_MSB,
+ 		addr >> 16);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set addr msb value: %d\n", ret);
++		dev_err(component->dev, "Failed to set addr msb value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_ADDR_LSB,
+ 		addr & 0xffff);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set addr lsb value: %d\n", ret);
++		dev_err(component->dev, "Failed to set addr lsb value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+ 	ret = regmap_write(rt5680->regmap_physical, RT5680_DSP_I2C_OP_CODE,
+ 		0x0002);
+ 	if (ret < 0) {
+-		dev_err(codec->dev, "Failed to set op code value: %d\n", ret);
++		dev_err(component->dev, "Failed to set op code value: %d\n", ret);
+ 		goto err;
+ 	}
+ 
+@@ -2290,7 +2290,7 @@ static int rt5680_hw_params(struct snd_pcm_substream *substream,
+ static int rt5680_set_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
+ 			unsigned int rx_mask, int slots, int slot_width)
+ {
+-	struct snd_soc_codec *codec = dai->codec;
++	struct snd_soc_component *component = dai->component;
+ 	unsigned int val = 0;
+ 
+ 	if (rx_mask || tx_mask)
+@@ -2329,7 +2329,7 @@ static int rt5680_set_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
+ 		break;
+ 	}
+ 
+-	snd_soc_update_bits(codec, RT5680_TDM1_CTRL1,
++	snd_soc_component_update_bits(component, RT5680_TDM1_CTRL1,
+ 			RT5680_TDM_TDM_MODE |
+ 			RT5680_TDM_IN_SLOT_SEL_MASK |
+ 			RT5680_TDM_OUT_SLOT_SEL_MASK |
+@@ -2439,14 +2439,14 @@ static ssize_t rt5680_codec_adb_show(struct device *dev,
+ {
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct rt5680_priv *rt5680 = i2c_get_clientdata(client);
+-	struct snd_soc_codec *codec = rt5680->codec;
++	struct snd_soc_component *component = rt5680->component;
+ 	unsigned int val;
+ 	int cnt = 0, i;
+ 
+ 	for (i = 0; i < rt5680->adb_reg_num; i++) {
+ 		if (cnt + RT5680_REG_DISP_LEN >= PAGE_SIZE)
+ 			break;
+-		val = snd_soc_read(codec, rt5680->adb_reg_addr[i]);
++		val = snd_soc_component_read(component, rt5680->adb_reg_addr[i]);
+ 		cnt += snprintf(buf + cnt, RT5680_REG_DISP_LEN, "%04x: %04x\n",
+ 			rt5680->adb_reg_addr[i], val);
+ 	}
+@@ -2459,7 +2459,7 @@ static ssize_t rt5680_codec_adb_store(struct device *dev,
+ {
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct rt5680_priv *rt5680 = i2c_get_clientdata(client);
+-	struct snd_soc_codec *codec = rt5680->codec;
++	struct snd_soc_component *component = rt5680->component;
+ 	unsigned int value = 0;
+ 	int i = 2, j = 0;
+ 
+@@ -2523,7 +2523,7 @@ static ssize_t rt5680_codec_adb_store(struct device *dev,
+ 		rt5680->adb_reg_num = j;
+ 
+ 		for (i = 0; i < rt5680->adb_reg_num; i++) {
+-			snd_soc_write(codec,
++			snd_soc_component_write(component,
+ 				rt5680->adb_reg_addr[i] & 0xffff,
+ 				rt5680->adb_reg_value[i]);
+ 		}
+@@ -2536,7 +2536,7 @@ static ssize_t rt5680_codec_adb_store(struct device *dev,
+ static DEVICE_ATTR(codec_reg_adb, 0664, rt5680_codec_adb_show,
+ 			rt5680_codec_adb_store);
+ 
+-static int rt5680_set_bias_level(struct snd_soc_codec *codec,
++static int rt5680_set_bias_level(struct snd_soc_component *component,
+ 			enum snd_soc_bias_level level)
+ {
+ 	switch (level) {
+@@ -2544,14 +2544,14 @@ static int rt5680_set_bias_level(struct snd_soc_codec *codec,
+ 		break;
+ 
+ 	case SND_SOC_BIAS_PREPARE:
+-		if (SND_SOC_BIAS_STANDBY == snd_soc_codec_get_bias_level(codec)) {
+-			snd_soc_update_bits(codec, RT5680_PWR_ANA1,
++		if (SND_SOC_BIAS_STANDBY == snd_soc_component_get_bias_level(component)) {
++			snd_soc_component_update_bits(component, RT5680_PWR_ANA1,
+ 				RT5680_PWR_VREF1 | RT5680_PWR_MB |
+ 				RT5680_PWR_VREF2 | RT5680_PWR_VREF4,
+ 				RT5680_PWR_VREF1 | RT5680_PWR_MB |
+ 				RT5680_PWR_VREF2 | RT5680_PWR_VREF4);
+ 			mdelay(10);
+-			snd_soc_update_bits(codec, RT5680_PWR_ANA1,
++			snd_soc_component_update_bits(component, RT5680_PWR_ANA1,
+ 				RT5680_PWR_FV1 | RT5680_PWR_FV2 |
+ 				RT5680_PWR_FV4,
+ 				RT5680_PWR_FV1 | RT5680_PWR_FV2 |
+@@ -2572,32 +2572,32 @@ static int rt5680_set_bias_level(struct snd_soc_codec *codec,
+ 	return 0;
+ }
+ 
+-static int rt5680_probe(struct snd_soc_codec *codec)
++static int rt5680_probe(struct snd_soc_component *component)
+ {
+-	struct rt5680_priv *rt5680 = snd_soc_codec_get_drvdata(codec);
++	struct rt5680_priv *rt5680 = snd_soc_component_get_drvdata(component);
+ 	int ret;
+ 
+ 	pr_info("Codec driver version %s\n", VERSION);
+ 
+-	rt5680->codec = codec;
++	rt5680->component = component;
+ 
+-	ret = device_create_file(codec->dev, &dev_attr_codec_reg);
++	ret = device_create_file(component->dev, &dev_attr_codec_reg);
+ 	if (ret != 0) {
+-		dev_err(codec->dev,
++		dev_err(component->dev,
+ 			"Failed to create codec_reg sysfs files: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	ret = device_create_file(codec->dev, &dev_attr_codec_reg_adb);
++	ret = device_create_file(component->dev, &dev_attr_codec_reg_adb);
+ 	if (ret != 0) {
+-		dev_err(codec->dev,
++		dev_err(component->dev,
+ 			"Failed to create codec_reg_adb sysfs files: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	ret = device_create_file(codec->dev, &dev_attr_is_dsp_mode);
++	ret = device_create_file(component->dev, &dev_attr_is_dsp_mode);
+ 	if (ret != 0) {
+-		dev_err(codec->dev,
++		dev_err(component->dev,
+ 			"Failed to create is_dsp_mode sysfs files: %d\n", ret);
+ 		return ret;
+ 	}
+@@ -2605,22 +2605,20 @@ static int rt5680_probe(struct snd_soc_codec *codec)
+ 	return 0;
+ }
+ 
+-static int rt5680_remove(struct snd_soc_codec *codec)
++static void rt5680_remove(struct snd_soc_component *component)
+ {
+-	device_remove_file(codec->dev, &dev_attr_codec_reg);
+-	device_remove_file(codec->dev, &dev_attr_codec_reg_adb);
+-	device_remove_file(codec->dev, &dev_attr_is_dsp_mode);
+-
+-	return 0;
++	device_remove_file(component->dev, &dev_attr_codec_reg);
++	device_remove_file(component->dev, &dev_attr_codec_reg_adb);
++	device_remove_file(component->dev, &dev_attr_is_dsp_mode);
+ }
+ 
+ #ifdef CONFIG_PM
+-static int rt5680_suspend(struct snd_soc_codec *codec)
++static int rt5680_suspend(struct snd_soc_component *component)
+ {
+ 	return 0;
+ }
+ 
+-static int rt5680_resume(struct snd_soc_codec *codec)
++static int rt5680_resume(struct snd_soc_component *component)
+ {
+ 	return 0;
+ }
+@@ -2686,20 +2684,22 @@ struct snd_soc_dai_driver rt5680_dai[] = {
+ 	},
+ };
+ 
+-static struct snd_soc_codec_driver soc_codec_dev_rt5680 = {
+-	.probe = rt5680_probe,
+-	.remove = rt5680_remove,
+-	.suspend = rt5680_suspend,
+-	.resume = rt5680_resume,
+-	.set_bias_level = rt5680_set_bias_level,
+-	.component_driver = {
+-		.controls		= rt5680_snd_controls,
+-		.num_controls		= ARRAY_SIZE(rt5680_snd_controls),
+-		.dapm_widgets		= rt5680_dapm_widgets,
+-		.num_dapm_widgets	= ARRAY_SIZE(rt5680_dapm_widgets),
+-		.dapm_routes		= rt5680_dapm_routes,
+-		.num_dapm_routes	= ARRAY_SIZE(rt5680_dapm_routes),
+-	},
++static const struct snd_soc_component_driver soc_component_dev_rt5680 = {
++	.probe			= rt5680_probe,
++	.remove			= rt5680_remove,
++	.suspend		= rt5680_suspend,
++	.resume			= rt5680_resume,
++	.set_bias_level		= rt5680_set_bias_level,
++	.controls		= rt5680_snd_controls,
++	.num_controls		= ARRAY_SIZE(rt5680_snd_controls),
++	.dapm_widgets		= rt5680_dapm_widgets,
++	.num_dapm_widgets	= ARRAY_SIZE(rt5680_dapm_widgets),
++	.dapm_routes		= rt5680_dapm_routes,
++	.num_dapm_routes	= ARRAY_SIZE(rt5680_dapm_routes),
++	.idle_bias_on		= 1,
++	.use_pmdown_time	= 1,
++	.endianness		= 1,
++	.non_legacy_dai_naming	= 1,
+ };
+ 
+ static const struct regmap_config rt5680_regmap_physical = {
+@@ -2838,7 +2838,8 @@ static int rt5680_i2c_probe(struct i2c_client *i2c,
+ 	if (ret != 0)
+ 		dev_warn(&i2c->dev, "Failed to apply rt5680 reg init list: %d\n", ret);
+ 
+-	ret = snd_soc_register_codec(&i2c->dev, &soc_codec_dev_rt5680,
++	ret = devm_snd_soc_register_component(&i2c->dev,
++			&soc_component_dev_rt5680,
+ 			rt5680_dai, ARRAY_SIZE(rt5680_dai));
+ 	if (ret == 0) {
+ 		dev_info(&i2c->dev, "%s: Sucess to register CODEC: ret=%d", __func__, ret);
+@@ -2849,20 +2850,13 @@ static int rt5680_i2c_probe(struct i2c_client *i2c,
+ 	return ret;
+ }
+ 
+-static int rt5680_i2c_remove(struct i2c_client *i2c)
+-{
+-	snd_soc_unregister_codec(&i2c->dev);
+-
+-	return 0;
+-}
+-
+ void rt5680_i2c_shutdown(struct i2c_client *client)
+ {
+ 	struct rt5680_priv *rt5680 = i2c_get_clientdata(client);
+-	struct snd_soc_codec *codec = rt5680->codec;
++	struct snd_soc_component *component = rt5680->component;
+ 
+-	if (codec != NULL)
+-		rt5680_set_bias_level(codec, SND_SOC_BIAS_OFF);
++	if (component != NULL)
++		rt5680_set_bias_level(component, SND_SOC_BIAS_OFF);
+ }
+ 
+ struct i2c_driver rt5680_i2c_driver = {
+@@ -2873,7 +2867,6 @@ struct i2c_driver rt5680_i2c_driver = {
+ #endif
+ 	},
+ 	.probe = rt5680_i2c_probe,
+-	.remove   = rt5680_i2c_remove,
+ 	.shutdown = rt5680_i2c_shutdown,
+ 	.id_table = rt5680_i2c_id,
+ };
+diff --git a/sound/soc/codecs/rt5680.h b/sound/soc/codecs/rt5680.h
+index b48ee61f4..b5f97e619 100644
+--- a/sound/soc/codecs/rt5680.h
++++ b/sound/soc/codecs/rt5680.h
+@@ -2231,7 +2231,7 @@ struct rt5680_pll_code {
+ };
+ 
+ struct rt5680_priv {
+-	struct snd_soc_codec *codec;
++	struct snd_soc_component *component;
+ 	struct regmap *regmap, *regmap_physical;
+ 	struct mutex dsp_lock;
+ 	struct snd_soc_jack *hp_jack;
+@@ -2256,8 +2256,8 @@ struct rt5680_priv {
+ 	unsigned short adb_reg_num;
+ };
+ 
+-int rt5680_headset_detect(struct snd_soc_codec *codec, int jack_insert);
+-int rt5680_set_jack_detect(struct snd_soc_codec *codec,
++int rt5680_headset_detect(struct snd_soc_component *component, int jack_insert);
++int rt5680_set_jack_detect(struct snd_soc_component *component,
+ 	struct snd_soc_jack *hp_jack);
+ 
+ #endif /* __RT5680_H__ */
+diff --git a/sound/soc/codecs/tas5805m.c b/sound/soc/codecs/tas5805m.c
+index efa8958b7..b13e2de0f 100644
+--- a/sound/soc/codecs/tas5805m.c
++++ b/sound/soc/codecs/tas5805m.c
+@@ -258,8 +258,8 @@ static int tas5805m_vol_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_
+ 
+ static int tas5805m_vol_locked_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+ {
+-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+-	struct tas5805m_priv *tas5805m = snd_soc_codec_get_drvdata(codec);
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct tas5805m_priv *tas5805m = snd_soc_component_get_drvdata(component);
+ 		
+ 	mutex_lock(&tas5805m->lock);	
+ 	ucontrol->value.integer.value[0] = tas5805m->vol;
+@@ -283,7 +283,7 @@ static inline int get_volume_index(int vol)
+    return index;
+ }
+ 
+-static void tas5805m_set_volume(struct snd_soc_codec *codec, int vol)
++static void tas5805m_set_volume(struct snd_soc_component *component, int vol)
+ {
+     unsigned int index;
+ 	uint32_t volume_hex;
+@@ -301,37 +301,37 @@ static void tas5805m_set_volume(struct snd_soc_codec *codec, int vol)
+ 	byte1 = ((volume_hex >> 0)	& 0xFF);
+ 	
+ 	/* w 58 00 00 */
+-	snd_soc_write(codec, TAS5805M_REG_00, TAS5805M_PAGE_00);
++	snd_soc_component_write(component, TAS5805M_REG_00, TAS5805M_PAGE_00);
+ 	/* w 58 7f 8c */
+-	snd_soc_write(codec, TAS5805M_REG_7F, TAS5805M_BOOK_8C);
++	snd_soc_component_write(component, TAS5805M_REG_7F, TAS5805M_BOOK_8C);
+ 	/* w 58 00 2a */
+-	snd_soc_write(codec, TAS5805M_REG_00, TAS5805M_PAGE_2A);
++	snd_soc_component_write(component, TAS5805M_REG_00, TAS5805M_PAGE_2A);
+ 	/* w 58 24 xx xx xx xx */
+-	snd_soc_write(codec, TAS5805M_REG_24, byte4);
+-	snd_soc_write(codec, TAS5805M_REG_25, byte3);
+-	snd_soc_write(codec, TAS5805M_REG_26, byte2);
+-	snd_soc_write(codec, TAS5805M_REG_27, byte1);
++	snd_soc_component_write(component, TAS5805M_REG_24, byte4);
++	snd_soc_component_write(component, TAS5805M_REG_25, byte3);
++	snd_soc_component_write(component, TAS5805M_REG_26, byte2);
++	snd_soc_component_write(component, TAS5805M_REG_27, byte1);
+ 	/* w 58 28 xx xx xx xx */
+-	snd_soc_write(codec, TAS5805M_REG_28, byte4);
+-	snd_soc_write(codec, TAS5805M_REG_29, byte3);
+-	snd_soc_write(codec, TAS5805M_REG_2A, byte2);
+-	snd_soc_write(codec, TAS5805M_REG_2B, byte1);
++	snd_soc_component_write(component, TAS5805M_REG_28, byte4);
++	snd_soc_component_write(component, TAS5805M_REG_29, byte3);
++	snd_soc_component_write(component, TAS5805M_REG_2A, byte2);
++	snd_soc_component_write(component, TAS5805M_REG_2B, byte1);
+ 	/* w 58 28 xx xx xx xx，for mono 1.1 */
+-	snd_soc_write(codec, TAS5805M_REG_2C, byte4);
+-	snd_soc_write(codec, TAS5805M_REG_2D, byte3);
+-	snd_soc_write(codec, TAS5805M_REG_2E, byte2);
+-	snd_soc_write(codec, TAS5805M_REG_2F, byte1);
++	snd_soc_component_write(component, TAS5805M_REG_2C, byte4);
++	snd_soc_component_write(component, TAS5805M_REG_2D, byte3);
++	snd_soc_component_write(component, TAS5805M_REG_2E, byte2);
++	snd_soc_component_write(component, TAS5805M_REG_2F, byte1);
+ }
+ 
+ static int tas5805m_vol_locked_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+ {
+-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+-	struct tas5805m_priv *tas5805m = snd_soc_codec_get_drvdata(codec);
+-		
+-	mutex_lock(&tas5805m->lock);	
+-	
+-	tas5805m->vol = ucontrol->value.integer.value[0];	
+-	tas5805m_set_volume(codec, tas5805m->vol);
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct tas5805m_priv *tas5805m = snd_soc_component_get_drvdata(component);
++
++	mutex_lock(&tas5805m->lock);
++
++	tas5805m->vol = ucontrol->value.integer.value[0];
++	tas5805m_set_volume(component, tas5805m->vol);
+ 	
+ 	mutex_unlock(&tas5805m->lock);
+ 	
+@@ -357,32 +357,33 @@ static const struct snd_kcontrol_new tas5805m_vol_control =
+ 	.put   = tas5805m_vol_locked_put, 
+ };
+ 
+-static int tas5805m_snd_probe(struct snd_soc_codec *codec)
++static int tas5805m_snd_probe(struct snd_soc_component *component)
+ {
+     int ret;
+-		
+-	ret = snd_soc_add_codec_controls(codec, &tas5805m_vol_control, 1);
++
++	ret = snd_soc_add_component_controls(component, &tas5805m_vol_control, 1);
+ 
+ 	return ret;
+ }
+ 
+-static struct snd_soc_codec_driver soc_codec_tas5805m = {
+-	.probe = tas5805m_snd_probe,
+-
+-	.component_driver = {
+-		.dapm_widgets		= dit_widgets_5805m,
+-		.num_dapm_widgets	= ARRAY_SIZE(dit_widgets_5805m),
+-		.dapm_routes		= dit_routes_5805m,
+-		.num_dapm_routes	= ARRAY_SIZE(dit_routes_5805m),
+-	},
++static const struct snd_soc_component_driver soc_component_tas5805m = {
++	.probe			= tas5805m_snd_probe,
++	.dapm_widgets		= dit_widgets_5805m,
++	.num_dapm_widgets	= ARRAY_SIZE(dit_widgets_5805m),
++	.dapm_routes		= dit_routes_5805m,
++	.num_dapm_routes	= ARRAY_SIZE(dit_routes_5805m),
++	.idle_bias_on		= 1,
++	.use_pmdown_time	= 1,
++	.endianness		= 1,
++	.non_legacy_dai_naming	= 1,
+ };
+ 
+-static int tas5805m_mute(struct snd_soc_dai *dai, int mute)
++static int tas5805m_mute(struct snd_soc_dai *dai, int mute, int direction)
+ {
+ 	u8 reg03_value = 0;
+ 	u8 reg35_value = 0;
+-	struct snd_soc_codec *codec = dai->codec;
+-	
++	struct snd_soc_component *component = dai->component;
++
+ 	if (mute)
+ 	{
+ 	    /* mute both left & right channels */
+@@ -396,17 +397,18 @@ static int tas5805m_mute(struct snd_soc_dai *dai, int mute)
+ 		reg35_value = 0x11;	
+ 	}	
+ 	
+-	snd_soc_write(codec, TAS5805M_REG_00, TAS5805M_PAGE_00);
+-	snd_soc_write(codec, TAS5805M_REG_7F, TAS5805M_BOOK_00);
+-	snd_soc_write(codec, TAS5805M_REG_00, TAS5805M_PAGE_00);	
+-	snd_soc_write(codec, TAS5805M_REG_03, reg03_value);
+-	snd_soc_write(codec, TAS5805M_REG_35, reg35_value);
++	snd_soc_component_write(component, TAS5805M_REG_00, TAS5805M_PAGE_00);
++	snd_soc_component_write(component, TAS5805M_REG_7F, TAS5805M_BOOK_00);
++	snd_soc_component_write(component, TAS5805M_REG_00, TAS5805M_PAGE_00);
++	snd_soc_component_write(component, TAS5805M_REG_03, reg03_value);
++	snd_soc_component_write(component, TAS5805M_REG_35, reg35_value);
+ 
+ 	return 0;
+ }
+ 
+ static const struct snd_soc_dai_ops tas5805m_dai_ops = {
+-	.digital_mute = tas5805m_mute,
++	.mute_stream = tas5805m_mute,
++	.no_capture_mute = 1,
+ };
+ 
+ static struct snd_soc_dai_driver tas5805m_dai = {
+@@ -467,11 +469,11 @@ static int tas5805m_probe(struct device *dev, struct regmap *regmap)
+ 
+ 	}
+ 	mdelay(5);
+-	ret = snd_soc_register_codec(dev, 
+-	                             &soc_codec_tas5805m,
+-			                     &tas5805m_dai, 
++	ret = devm_snd_soc_register_component(dev,
++	                             &soc_component_tas5805m,
++			                     &tas5805m_dai,
+ 								 1);
+-	if (ret != 0) 
++	if (ret != 0)
+ 	{
+ 		dev_err(dev, "Failed to register CODEC: %d\n", ret);
+ 		goto err;
+@@ -550,11 +552,10 @@ static int tas5805m_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id
+ }
+ 
+ static int tas5805m_remove(struct device *dev)
+-{	
++{
+ 	gpio_direction_output(enable_pdn, 0);
+ 	gpio_free(enable_pdn);
+-	snd_soc_unregister_codec(dev);
+-	
++
+ 	return 0;
+ }
+ 
+-- 
+2.50.1 (Apple Git-155)
+

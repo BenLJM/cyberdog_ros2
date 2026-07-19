@@ -1,0 +1,54 @@
+From c8325ccd23c28d93006dd9a802108c3d6ce00b66 Mon Sep 17 00:00:00 2001
+From: CyberDog Port <port@local>
+Date: Sun, 19 Jul 2026 12:37:42 +0800
+Subject: [PATCH 3/3] =?UTF-8?q?audio=20DT:=20mark=20tegra-alt=20card=20as?=
+ =?UTF-8?q?=20PLACEHOLDER=20=E2=80=94=20pivot=20to=20audio-graph=20in=20Ph?=
+ =?UTF-8?q?ase=205.6?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Finding 2026-07-19: the r35.1 tegra-alt subsystem does NOT compile on 5.10
+(utils/tegra_pcm_alt.c and ~20 siblings use the removed pre-4.18 ASoC API:
+snd_soc_platform, rtd->{platform,cpu_dai}, dma_mmap_writecombine). zbwu never
+forward-ported it. The mainline audio-graph stack builds clean and is the
+correct target. DTB still compiles (data only); no Phase-4 impact. Codec i2c
+nodes + routing table kept as the wiring oracle for the graph rewrite.
+---
+ kernel-dts/tegra194-mi-k91-audio.dtsi | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/kernel-dts/tegra194-mi-k91-audio.dtsi b/kernel-dts/tegra194-mi-k91-audio.dtsi
+index 8de46a3..786f39a 100644
+--- a/kernel-dts/tegra194-mi-k91-audio.dtsi
++++ b/kernel-dts/tegra194-mi-k91-audio.dtsi
+@@ -1,5 +1,26 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
++ * ############################################################################
++ * PLACEHOLDER — the tegra-alt machine driver this card targets does NOT
++ * compile on kernel 5.10 (2026-07-19 finding). The entire r35.1 tegra-alt
++ * subsystem (utils/tegra_pcm_alt.c et al.) still uses the pre-4.18 ASoC API
++ * removed in 5.10: struct snd_soc_platform, snd_soc_pcm_runtime.{platform,
++ * cpu_dai}, dma_mmap_writecombine — ~20 driver files would each need the same
++ * component-API port the codecs got. zbwu never forward-ported tegra-alt.
++ *
++ * DECISION: Phase 5.6 audio bring-up re-authors this card for the MAINLINE
++ * audio-graph stack (nvidia,tegra186-audio-graph-card), which already builds
++ * clean in this tree (snd-soc-tegra-audio-graph-card.ko). That means graph
++ * ports/endpoints instead of nvidia,dai-link-N, and adding audio-graph OF
++ * endpoints to the rt5680/tas5805m codec nodes + drivers. Route/mic-channel
++ * binding needs the real hardware regardless (dmesg/aplay/amixer loop).
++ *
++ * This DTB compiles (data only) and does NOT affect Phase 4 first-boot; the
++ * card simply won't bind at runtime until Phase 5.6. The codec i2c nodes,
++ * GPIO wiring, and nvidia,audio-routing table below stay valid as the wiring
++ * oracle for the audio-graph rewrite. Kept, not reverted, for that reason.
++ * ############################################################################
++ *
+  * CyberDog (Xiaomi mi-k91 / Jetson Xavier NX) audio wiring for L4T r35.6.4
+  * (kernel 5.10), ported from the JetPack4 / L4T-r32 (kernel 4.9) tegra-alt
+  * "mobile" framework.
+-- 
+2.50.1 (Apple Git-155)
+
