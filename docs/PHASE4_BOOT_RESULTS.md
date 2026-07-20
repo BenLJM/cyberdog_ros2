@@ -8,8 +8,11 @@ our self-built module set, and the morrownr `8821cu` module (loads, refcnt 0 —
 nothing to bind, see below) all work. `jp5-boot-ok.service` cleared the boot
 counter. **The hard part of the port — a bootable JP5 — is done.**
 
-The dog is currently reverted to **JP4** (`DEFAULT primary`) so it stays
-usable/Wi-Fi-reachable while the peripheral bring-up (below) is a Phase-5 job.
+**UPDATE 2026-07-20 — Wi-Fi is now FIXED and works from a clean boot.** JP5
+brings up `wlan0`, associates with the AP, and is reachable at its usual DHCP
+IP with no manual steps. See "Wi-Fi fix" below. Cameras/motors/audio remain
+Phase-5 items. The dog currently boots **JP5** (DEFAULT jp5); `boot-switch`
+back to JP4 any time.
 
 ## How Phase 4 was executed (unattended, no x86 host needed)
 
@@ -84,15 +87,39 @@ RTCPU/SPE firmware isn't answering (separate, cameras-only).
 itself is electrically fine (the 0x50 EEPROM responds), so it's **expander-
 specific**, not a dead bus.
 
-## Phase-5 fix directions (each = DTB/kernel rebuild → re-stage → cold boot → read p2 journald via the bridge)
+## Wi-Fi fix (2026-07-20) — SOLVED, two independent root causes
 
-1. **Slow `i2c@3160000` to 100 kHz** (`clock-frequency = <100000>`) — classic
-   fix when a chip NAKs at 400 kHz. Cheapest first try.
-2. Check for an **expander power/reset line** the JP4 stack drives that JP5
-   doesn't (bus works for 0x50 → it's the expander's own power/reset, or a
-   TCA6424 quirk vs the mainline pca953x driver's auto-increment init write).
-3. Provision the **RTCPU/SPE camera firmware** (for the cameras; independent of
-   Wi-Fi).
+Traced live over the debug bridge, then fixed and confirmed on a clean boot
+(`wlan0` associates on its own, dog reachable over Wi-Fi; BT firmware also
+loads via `rtk_btusb`).
+
+**Fix 1 — TCA6424 shared reset (DTB).** The two GPIO expanders on `i2c@3160000`
+share one active-low RESET (AON `CC,3`). Xiaomi's 4.9 `gpio-pca953x` pulsed it;
+zbwu commented the DT `reset-gpio` out, so on 5.10 the expanders stay in reset
+and NAK i2c (`pca953x` probe `-121`) → every GPIO-gated fixed regulator defers
+`-517` (no Wi-Fi/BT/camera power). Added a **gpio-hog** driving AON `CC,3` HIGH
+from AON-gpio registration — releases both chips before either probes, dodging
+the shared-claim / probe-order hazard of `reset-gpios` on the nodes.
+`tools/phase3/cyberdog-deltas/jakku-dts/0004-*.patch`. After this: expanders
+probe (`i2cdetect` shows `UU` at 0x22/0x23), `vdd-3v3-wlan-bt` enables.
+
+**Fix 2 — xhci host firmware in the initrd.** With power restored, `wlan0`
+still didn't appear because the internal RTL8821CU is on the USB *host* bus and
+`tegra-xusb 3610000.xhci` failed: it is a **builtin** driver that
+`request_firmware()`s `nvidia/tegra194/xusb.bin` during early kernel init —
+while our minimal initramfs is root, before `switch_root` — so the rootfs copy
+is invisible (`direct load -2` → udev fallback `-110` → probe fails
+permanently, USB host bus never comes up). Baking `xusb.bin` into the initramfs
+(`build-jp5-initrd.sh`, +80 KB) makes the early direct load succeed. After
+this: `usb 1-2.2 idVendor=0bda idProduct=c820`, `8821cu` binds, `wlan0`
+connects — from a clean boot, no manual rebind.
+
+## Remaining Phase-5 peripheral items (Fix 1 unblocked their power)
+
+- **Cameras** (`ov7251`/`ov13b10`): the reset-hog restored their regulator
+  power, but the camera **RTCPU/SPE firmware** still fails (`bc00000.rtcpu`
+  sha1=000…0, HSP response timeouts) — provision that firmware next.
+- **Motors** (CAN), **audio** (§5.6 tegra186-ape), **IMU** binding — as scoped.
 
 ## Files added this phase
 

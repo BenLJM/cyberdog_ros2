@@ -1,0 +1,54 @@
+From b8a3485a05fb5c428bdc3f0ac8db157f08f41c41 Mon Sep 17 00:00:00 2001
+From: Ben <luckyljmever@gmail.com>
+Date: Mon, 20 Jul 2026 12:37:38 +0800
+Subject: [PATCH 4/4] jakku DTS: release the TCA6424 shared reset via a
+ gpio-hog (fixes JP5 Wi-Fi/cameras)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The two tca6424 GPIO expanders on i2c@3160000 share one active-low RESET line
+(AON CC,3). Xiaomi's 4.9 gpio-pca953x pulsed it; zbwu commented the DT
+reset-gpio out, so on 5.10 (mainline pca953x) the expanders stay held in reset
+and NAK i2c (probe -121) — every GPIO-gated fixed regulator then defers -517
+(no Wi-Fi/BT power, no camera rails). A gpio-hog driving AON CC,3 HIGH from
+gpio-controller registration releases both chips before either probes, without
+the shared-claim / probe-order hazard of reset-gpios on the nodes.
+---
+ kernel-dts/common/tegra194-p2151-0000.dtsi | 23 ++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/kernel-dts/common/tegra194-p2151-0000.dtsi b/kernel-dts/common/tegra194-p2151-0000.dtsi
+index ea8df64..395e908 100644
+--- a/kernel-dts/common/tegra194-p2151-0000.dtsi
++++ b/kernel-dts/common/tegra194-p2151-0000.dtsi
+@@ -454,3 +454,26 @@
+ 		status = "disabled";
+ 	};
+ };
++
++/*
++ * 2026-07-20: release the shared active-low RESET of the two TCA6424 GPIO
++ * expanders (gpio_expand1@23 / gpio_expand2@22 on i2c@3160000). Xiaomi's 4.9
++ * gpio-pca953x carried a custom reset-gpio pulse; zbwu commented the DT
++ * reset-gpio out ("shared reset is a dangerous design"), so on 5.10 the
++ * expanders stay held in reset and NAK i2c (pca953x probe -121 EREMOTEIO) →
++ * gpio_expand2 never registers → every GPIO-gated fixed regulator
++ * (vdd_3v3_wlan_bt = Wi-Fi/BT power, camera vana/vif, gps, ...) defers -517 →
++ * no wlan0, no cameras. A gpio-hog driving the reset line HIGH (= de-asserted,
++ * active-low reset) from AON-gpio registration — before either expander probes
++ * — releases BOTH chips without the shared-claim / probe-order hazards of
++ * putting reset-gpios on the nodes. Reset pin = AON CC,3 (matches the factory
++ * JP4 DT reset-gpio <&tegra_aon_gpio 19 0>). See docs/PHASE4_BOOT_RESULTS.md.
++ */
++&tegra_aon_gpio {
++	tca6424_reset_release {
++		gpio-hog;
++		gpios = <TEGRA194_AON_GPIO(CC, 3) GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "tca6424-shared-reset";
++	};
++};
+-- 
+2.50.1 (Apple Git-155)
+

@@ -84,6 +84,29 @@ mknod -m 666 "$R/dev/urandom" c 1 9
 # ---------- the auto-revert guard (canonical copy lives in tools/phase3) ----------
 install -m 755 "$HOOK" "$R/sbin/jp5-autorevert-hook"
 
+# ---------- tegra-xusb HOST-controller firmware (2026-07-20) ----------
+# The tegra-xusb (3610000.xhci) driver is BUILTIN and request_firmware()s
+# nvidia/tegra194/xusb.bin during early kernel init — while THIS initramfs is
+# still root, before switch_root. The real rootfs copy is therefore invisible
+# to it (direct load -2 → udev fallback -110 → probe fails permanently), so the
+# USB HOST bus never comes up and the internal RTL8821CU Wi-Fi/BT (which lives
+# on that host bus) never enumerates. Bake the firmware into the initramfs so
+# the early direct load succeeds. See docs/PHASE4_BOOT_RESULTS.md.
+# Source the firmware from the assembled JP5 rootfs or the L4T BSP (it ships in
+# the nvidia-l4t-xusb-firmware deb) — NVIDIA proprietary, not committed here:
+#   cp <rootfs-or-BSP>/lib/firmware/nvidia/tegra194/xusb.bin \
+#      ~/projects/cyberdog/build/firmware/nvidia/tegra194/xusb.bin
+XUSB_FW=${XUSB_FW:-/work/firmware/nvidia/tegra194/xusb.bin}
+if [ -f "$XUSB_FW" ]; then
+    mkdir -p "$R/lib/firmware/nvidia/tegra194"
+    cp "$XUSB_FW" "$R/lib/firmware/nvidia/tegra194/xusb.bin"
+else
+    echo "FATAL: xusb host firmware not found at $XUSB_FW"
+    echo "       copy it from the assembled rootfs or L4T BSP:"
+    echo "       /lib/firmware/nvidia/tegra194/xusb.bin -> \$(dirname $XUSB_FW)/"
+    exit 1
+fi
+
 # ---------- USB gadget console (same VID/PID/MACs as stock nv-l4t-usb-device-mode,
 #            same shape as the Phase-2 rescue rc.rescue gadget block) ----------
 cat > "$R/etc/jp5-gadget.sh" <<'EOF'

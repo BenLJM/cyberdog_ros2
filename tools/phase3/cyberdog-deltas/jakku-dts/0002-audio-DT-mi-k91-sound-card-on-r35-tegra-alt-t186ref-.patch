@@ -1,7 +1,7 @@
 From fe4709f2d8bd855a61f6cd60b8f4ad77f9f7cf0c Mon Sep 17 00:00:00 2001
 From: CyberDog Port <port@local>
 Date: Sun, 19 Jul 2026 12:00:49 +0800
-Subject: [PATCH 2/3] audio DT: mi-k91 sound card on r35 tegra-alt t186ref
+Subject: [PATCH 2/4] audio DT: mi-k91 sound card on r35 tegra-alt t186ref
  machine driver
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
