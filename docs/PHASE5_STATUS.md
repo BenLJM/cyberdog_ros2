@@ -13,18 +13,28 @@ unblocked a lot here.
 | **Sensors (hwmon)** | ✅ 6 hwmon | thermal + power monitors (INA3221 etc.) up. |
 | **Cameras** | ❌ blocked by RCE firmware (CONFIRMED) | 3 v4l2 nodes correctly mapped (video0/1=ov7251@2-0061/62, video2=ov13b10@2-0036); all subdevs `bound`; **media graph is perfect** (`media-ctl -p`: every link ENABLED, formats set — ov13b10 SRGGB10 4208x3120, ov7251 SBGGR10 640x480). So it is NOT a sensor-streaming/media config issue. On `v4l2-ctl --stream-mmap` the kernel sends the capture-setup IVC to the RCE and it **times out** — dmesg: `vi_capture_setup → tegra_capture_ivc_tx → response timeout → rce full reset retry 2/3,3/3 → "vi capture setup failed"`. And `tegra-camera-rtcpu.c` has **no request_firmware path** — it only resets the RCE and boot-syncs to firmware already placed in the carveout **by the bootloader**. We keep the r32.5 Xiaomi cboot → the RCE runs the r32.x firmware (`sha1=0`), which handshakes (subdevs bind) but does not speak the 5.10 capture protocol. **Fix requires updating the RCE firmware the bootloader loads = a QSPI/boot-firmware change — the exact brick-risk the dual-boot design avoids. Owner decision + RCM ready + present required; do NOT do it remotely/unattended.** This is the one peripheral the old-bootloader/new-kernel split cannot support without touching boot firmware. |
 | **IMU (BMI160)** | ❌ via MCU, not direct i2c | No iio device. Confirmed against the JP4 live DT: a `bmi160@69` node DOES exist (on `i2c@c240000`/bus-1, int on AON AA,2, mount matrices) **but it is `status="disabled"` on JP4 too** — the factory stack does NOT use the direct i2c IMU. Real IMU data flows through the **MCU coprocessor** (like motors/TOF) → part of the MCU subsystem below, not a simple DT node. (One could enable `bmi160@69` on JP5 to get a raw iio device, but the CyberDog software reads IMU from the MCU, so it wouldn't feed the stack.) |
-| **Audio** | ⏳ DTS authoring pending | Codec .ko (rt5680/tas5805m) built + framework-agnostic. `tegra194-mi-k91-audio.dtsi` is still the PLACEHOLDER. Phase 5.6 = re-author against **nvidia,tegra186-ape** + `nvidia-audio-card,*` (per the corrected pivot). Route/mic binding needs real HW. |
+| **Audio** | ⏳ DTS authoring (large, HW-validated) | Codec .ko (rt5680/tas5805m) built + framework-agnostic. `tegra194-mi-k91-audio.dtsi` is still the PLACEHOLDER. The JP4 card is a FULL tegra-alt/APE topology — `nvidia,tegra-audio-t186ref-mobile-rt565x`, **12 DAI links** (I2S2/4/6, DMIC2, DSPK1, …) + the big `nvidia,audio-routing` AHUB/XBAR table + rt5680 (6-mic capture) on one I2S and tas5805m (mono amp) on another. Re-authoring that against **nvidia,tegra186-ape** (the corrected pivot) is a substantial DT job, and **cannot be validated remotely** — route names, mic-channel order, and playback all need the owner listening (aplay/arecord/amixer loop). Getting the card to *register* is a remote software milestone; getting *sound* is owner-present. |
 
 ## What's genuinely remaining (and what it needs)
 
 **The big remaining piece is the MCU coprocessor subsystem.** The three GD32/
-STM32 MCUs (head/body/rear, the "R-domain" reachable at 192.168.55.233 over
-l4tbr0) own the motors, IMU, TOF, LEDs and touch — the Jetson talks to them and
-the cyberdog_ros2 stack consumes their data. Bringing the robot to life on JP5
-means porting that bridge (udev enable-sequence capture — the pre-Phase-2
-prereq still not done — then the motor/sensor SDK), and it's what makes motors/
-IMU/TOF "work" rather than just "the CAN interface is up". This is genuinely
-multi-session and needs the owner present to trigger motion.
+STM32 MCUs (head/body/rear) own the motors, IMU, TOF, LEDs and touch — the
+Jetson talks to them and the cyberdog_ros2 stack consumes their data.
+
+**2026-07-20 findings (once the xusb fix brought the USB host bus up):**
+`lsusb` now shows two **TI TUSB8041 4-port hubs** + the RTL8821CU; the MCUs sit
+BEHIND those hubs and do NOT enumerate (no /dev/ttyUSB*), and the R-domain
+`192.168.55.233` is not reachable on JP5. Their reset/enable lines are the
+expander pins the reset-hog now makes controllable — `RSTN_UTRA_F/R`,
+`RSTN_HUB`, `PROG_UTRA_F/R`, `VBUS_MOTION_EN` — and on JP5 they are **all
+undriven** (only line-named; the factory cyberdog stack drives them). **A blind
+attempt to drive them (RSTN_UTRA/HUB high) RESET the shared USB hub and knocked
+Wi-Fi off** (the RTL8821CU is behind the same TUSB8041) — recovered by a reboot
+via the laptop bridge. LESSON: the MCU enable sequence is delicate and shares
+the Wi-Fi hub; it must be done with the captured sequence, not guessed. So this
+needs: the pre-Phase-2 **udev enable-sequence capture** (owner triggers motion)
+→ the exact GPIO order → then the motor/sensor SDK. Genuinely multi-session,
+owner present. Do NOT poke these pins blind (it drops Wi-Fi).
 
 Tractable remotely (each = a DTB/kernel rebuild + reboot, verify over the bridge):
 - **Audio DTS** (Phase 5.6) — author against nvidia,tegra186-ape; validation

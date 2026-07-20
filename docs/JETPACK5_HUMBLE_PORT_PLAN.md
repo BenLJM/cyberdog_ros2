@@ -3,6 +3,8 @@
 > Living plan for porting a 2021 Xiaomi CyberDog 1 (Jetson Xavier NX, board `k91`) from the stock **JetPack 4.5.1 / L4T r32.5.2 / Ubuntu 18.04 / ROS 2 Foxy** firmware to a modern **JetPack 5.1.6 / L4T r35.6.4 / Ubuntu 20.04 / ROS 2 Humble** stack with an open voice pipeline and a Lichtblick / foxglove-bridge remote UI.
 >
 > **2026-07-07 — full plan review & retarget.** See [PLAN_REVIEW_2026-07-07.md](./PLAN_REVIEW_2026-07-07.md) (referenced below as "review §…/D…"): target moved r35.6.2 → r35.6.4 (final JetPack 5; **JP5 EOL Q3 2026 — mirror all artifacts now**), a new **Phase 0.5** re-tests the confounded April boot findings, Phase 2 is redesigned around a rescue initrd (online root-shrink is impossible), Phase 3's driver scope shifted from cameras (already done in zbwu's tree) to audio codecs, and **V1.0.0.94 stock firmware turned out to be publicly downloadable** — the recovery story is much stronger than previously believed.
+>
+> **2026-07-20 — progress.** **Phases 0–4 are DONE.** JP5 (kernel `5.10.216-tegra`, Ubuntu 20.04) now boots on `nvme0n1p2` as the default, dual-boot back to JP4 intact, **Wi-Fi + BT working** from a clean boot — full writeup [PHASE4_BOOT_RESULTS.md](./PHASE4_BOOT_RESULTS.md). **Phase 5 (hardware bring-up) is now in progress:** `can0` up healthy, 6 hwmon sensors up, cameras confirmed blocked by the RCE camera firmware (owner decision needed), audio DTS being authored, and IMU/TOF/motors gated on the MCU coprocessor subsystem — per-peripheral table in [PHASE5_STATUS.md](./PHASE5_STATUS.md).
 
 ---
 
@@ -164,7 +166,7 @@ De-risk all three in Phase 0.5 / early Phase 3 before any destructive step.
 | **0.5** Boot-path disambiguation | Low-Med | Marker bootargs + FDT-copy test; every step reversible; worst case ≈ 30-min forced-recovery revert. Schedule with the next day free. |
 | **2** Rescue initrd + offline NVMe surgery + `extlinux.conf` | **High** | First meaningful brick risk. Surgery runs OFFLINE from the RAM rescue initrd (online root-shrink is impossible — review §2.5). Access path = USB-gadget console (RNDIS + ttyGS0). eMMC APP p1 **is the boot pivot (Phase 0.5-proven)** and receives file-level additions only (`initrd-rescue`, `/boot-jp5/`, extlinux label/DEFAULT edits — `p01.img` dd-dump in hand); kernel/DTB/bootloader partitions stay untouched. |
 | **3** Kernel rebase | None | Host-only artifacts. |
-| **4** First JP5 boot | **High** | Bad initrd or missing `nvme`/`ext4` driver → kernel panic. Mitigations: bake critical drivers `=y`; `panic=15` bootarg; **auto-revert initrd hook** (root-mount failure → self-restore JP4 extlinux, review D5); USB-gadget console once the kernel is up. |
+| **4** First JP5 boot | **High** | **Cleared 2026-07-20 — JP5 booted OK ([PHASE4_BOOT_RESULTS.md](./PHASE4_BOOT_RESULTS.md)).** Bad initrd or missing `nvme`/`ext4` driver → kernel panic. Mitigations: bake critical drivers `=y`; `panic=15` bootarg; **auto-revert initrd hook** (root-mount failure → self-restore JP4 extlinux, review D5); USB-gadget console once the kernel is up. |
 | **5** CAN + motors | Medium physical | Motor misbehavior → physical danger. **Dog on a stand, legs off ground, every session.** Not a software brick. |
 | **6–10** Humble + voice + UI | Low | Software-only; rollback = reboot + LABEL primary. |
 
@@ -376,6 +378,8 @@ On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 
 ## 12. Phase 4 — First JP5 boot
 
+> **STATUS: DONE 2026-07-20.** JP5 boots to multi-user + graphical — kernel `5.10.216-tegra`, hostname `cyberdog-jp5`, root on `nvme0n1p2`; our modules + morrownr `8821cu` load; **Wi-Fi + BT work from a clean boot**; `jp5-boot-ok` clears the boot counter. The dog currently boots JP5 by **DEFAULT** (reachable over Wi-Fi at `10.0.0.219`); boot-switch back to JP4 any time. Step ⑥'s `apply_binaries`/chroot was done **natively on the dog** via a fake `qemu-aarch64-static` — no x86 host was needed. Full writeup: [PHASE4_BOOT_RESULTS.md](./PHASE4_BOOT_RESULTS.md). The 2026-07-19 execution notes below are now historical.
+
 **Deliverables.** Ubuntu 20.04 rootfs (JP5's sample rootfs + `apply_binaries.sh`) on `nvme0n1p2`; JP5 kernel + DTB + initrd in `/boot-jp5/` on **eMMC APP p1** (the boot pivot); SSH accessible.
 
 **Sub-tasks** *(sequence replaced 2026-07-19 per the retrospective — [RETROSPECTIVE-2026-07-19.md](./RETROSPECTIVE-2026-07-19.md) H1/H2/H4/H5 + §五)*
@@ -394,7 +398,7 @@ On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 > attributed to the shrink vs later changes) **and the MCU enable-sequence
 > capture is deferred to Phase 5** (window stays open while JP4 remains
 > bootable on p1). The backup roll-call (step ②) remains in the laptop night.
-> Remaining for the laptop night: ①②④⑤⑥⑦⑧⑨.
+> Remaining for the laptop night: ①②④⑤⑥⑦⑧⑨. **→ all completed 2026-07-20 — Phase 4 is DONE (see the STATUS note at the top of this section).**
 
 1. **Path-B RCM drill (zero-risk, first act of the night):** clean shutdown → USB cable in → power on → x86 `lsusb` shows `0955:7e19` → power off, boot back to JP4. Proves the last-resort recovery path that PHASE0_RECOVERY_PROCEDURES marks "NOT yet verified".
 2. **Backup roll-call:** SSD attached; sha256 spot-check of layer3 `p01.img` (last verified 2026-04-25) + the layer2 tar; tick the two open §0 boxes in PHASE2_RUNBOOK.
@@ -419,6 +423,15 @@ On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 
 ## 13. Phase 5 — Hardware bring-up
 
+> **STATUS 2026-07-20 — bring-up underway on the booted JP5 side** (full per-peripheral table: [PHASE5_STATUS.md](./PHASE5_STATUS.md)):
+> - **CAN (motors):** `can0` registers and comes up healthy (ERROR-ACTIVE @ 1 Mbps). Motors actually *moving* still needs the MCU subsystem + motor SDK + owner present.
+> - **Sensors:** 6 hwmon (thermal / power monitors) up.
+> - **Cameras:** **CONFIRMED blocked by the RCE camera firmware** — the r32.5 Xiaomi bootloader loads the r32.x RCE firmware into a carveout (the kernel driver has no `request_firmware` override), and it can't speak the 5.10 capture protocol; the media graph is perfect but capture-setup IVC times out. Fix needs a QSPI / boot-firmware change (the brick risk the dual-boot exists to avoid) — **owner decision required.**
+> - **IMU / TOF:** flow through the MCU coprocessor subsystem (the direct `bmi160@69` is `status=disabled` even on JP4); part of the MCU subsystem port (§5.2).
+> - **Audio:** DTS being authored now (§5.6, against `nvidia,tegra186-ape`).
+> - **MCU coprocessor subsystem** (3 GD32/STM32, "R-domain" `192.168.55.233`) is the big remaining piece **gating motors / IMU / TOF** — needs the pre-Phase-2 udev enable-sequence capture (still not done) + motor SDK + owner present.
+> - **Debug / rescue path (reusable):** Mac →(Wi-Fi)→ owner laptop `ben@10.0.0.176` →USB→ CyberDog `192.168.55.1` (+ `/dev/ttyACM0` serial).
+
 **Order: thermal/fan → CAN → motor SDK → MCUs → BMS → I²C → cameras → audio.** Safety-critical first, passive reads middle, GPU-dependent last.
 
 ### 5.0 Thermal & fan — gate for everything GPU-heavy (NEW, review D7)
@@ -438,6 +451,7 @@ On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 - Replay the enable sequence; `usb_adapter` (from `cyberdog_misc`) enumerates 3 USB-serial (`/dev/ttyUSB{0,1,2}` → head/body/rear MCUs).
 - `mcu_proto` parses telemetry frames; verify against Phase 0 `dmesg-boot.log` baseline.
 - **Status (2026-07-19):** the pre-Phase-2 `udevadm`+TCA6424 capture was NOT executed — `tools/mcu-capture/start-capture.sh` exists but lacks the TCA6424 GPIO read, and PHASE0_LAYER4_RUNBOOK L267 is still open. Rescheduled to a JP4-side night before/parallel with Phase 4, together with the owner walk test. The R-domain `192.168.55.233` was probed 2026-07-07 (reachable, dropbear); the deep-dive stays in Phase 5.
+- **Status (2026-07-20):** with JP5 now booted, this MCU subsystem is the **gating piece for motors + IMU + TOF** (all three route through it). The pre-Phase-2 `udevadm`+TCA6424 enable-capture is **still pending**; the JP4-side walk test it was paired with is now cancelled (§12), but the capture window stays open while JP4 remains bootable on p1. Unblocking motors/IMU/TOF needs the enable-sequence capture + motor SDK + owner present.
 
 ### 5.3 BMS
 
@@ -461,6 +475,7 @@ On the x86_64 host (Ubuntu 18.04/20.04 — r35.6.4's official matrix):
 
 ### 5.6 Audio (deep integration deferred to Phase 8)
 
+- **STATUS 2026-07-20:** the sound-card DTS is **being authored now** against `nvidia,tegra186-ape` (the primary target below); see [PHASE5_STATUS.md](./PHASE5_STATUS.md).
 - **Sound-card pivot (2026-07-19 retrospective):** primary target = **`nvidia,tegra186-ape` + `nvidia-audio-card,*` DT properties** — r35's documented custom-card path (`tegra_machine_driver.c`). **audio-graph is demoted to fallback:** it ships `status="disabled"` on t194, its `tegra_codecs.c` hardcodes codec special-cases, and its docs are thin. The 4.9→5.10 codec driver conversions (rt5680/tas5805m) are unaffected.
 - `aplay -l` shows TAS5805M card.
 - Simple `arecord` / `aplay` loop works.
