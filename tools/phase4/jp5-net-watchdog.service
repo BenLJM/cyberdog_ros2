@@ -1,0 +1,12 @@
+# jp5-net-watchdog.service — one-shot headless safety net (see jp5-net-watchdog.sh).
+# Install into the JP5 rootfs (chroot):
+#   install -m 755 jp5-net-watchdog.sh /usr/local/sbin/jp5-net-watchdog
+#   install -m 644 jp5-net-watchdog.service /etc/systemd/system/
+#   install -m 644 jp5-net-watchdog.timer   /etc/systemd/system/
+#   systemctl enable jp5-net-watchdog.timer
+[Unit]
+Description=JP5 unattended network watchdog (one-shot after boot)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jp5-net-watchdog

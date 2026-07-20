@@ -1,0 +1,13 @@
+# Run jp5-net-watchdog once, N minutes after boot. Generous by design: the
+# internal USB Wi-Fi enumerates ~66 s and can be slow, so a short window would
+# cut a healthy-but-slow boot short. 15 min is a reasonable default; raise it
+# (e.g. 30min) for a supervised bring-up/debug session.
+[Unit]
+Description=Run jp5-net-watchdog once after boot
+
+[Timer]
+OnBootSec=15min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
