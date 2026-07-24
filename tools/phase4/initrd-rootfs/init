@@ -1,0 +1,57 @@
+#!/bin/sh
+# CyberDog JP5 initramfs (Phase 4). Order matters:
+# mounts -> gadget console -> auto-revert guard -> switch_root to nvme0n1p2.
+export PATH=/bb:/bin:/sbin
+
+mount -t proc proc /proc 2>/dev/null
+mount -t devtmpfs none /dev 2>/dev/null
+mount -t sysfs sysfs /sys 2>/dev/null
+
+klog() { echo "jp5-init: $*" > /dev/kmsg 2>/dev/null; echo "jp5-init: $*" > /dev/console 2>/dev/null; }
+
+HOLD() {
+    klog "HOLD: $* — shells on ttyGS0 (USB) + console"
+    # setsid+cttyhack: give the rescue shell a controlling TTY so Ctrl-C works
+    if [ -c /dev/ttyGS0 ]; then
+        while :; do setsid cttyhack sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1; sleep 1; done &
+    fi
+    while :; do setsid cttyhack sh < /dev/console > /dev/console 2>&1; sleep 1; done
+}
+
+klog "up ($(cat /etc/jp5-initrd.build 2>/dev/null))"
+
+# 2. earliest possible observability — the sealed dog has no exposed UART
+/etc/jp5-gadget.sh || true
+
+# 3. the safety net: counts boot attempts, probes p2, reverts to JP4 or HOLDs.
+#    Returns 0 only when the JP5 rootfs looks bootable.
+/sbin/jp5-autorevert-hook || HOLD "auto-revert guard returned unexpectedly"
+
+# 4. real root mount (ro — systemd remounts rw per fstab) + switch_root
+i=0
+while [ "$i" -lt 10 ]; do [ -b /dev/nvme0n1p2 ] && break; sleep 1; i=$((i+1)); done
+mount -o ro /dev/nvme0n1p2 /newroot || HOLD "final root mount failed after probe OK"
+INIT=/sbin/init
+[ -x /newroot$INIT ] || [ -L /newroot$INIT ] || INIT=/lib/systemd/systemd
+[ -x /newroot$INIT ] || [ -L /newroot$INIT ] || HOLD "no init on JP5 root"
+
+# hand the gadget back CLEANLY: configfs is a kernel-global namespace that
+# survives switch_root. A leftover l4t gadget (even unbound) pins the rndis
+# function's refcount — the rootfs nv-l4t-usb-device-mode would get EBUSY
+# rewriting MACs and could die mid-setup. Tear the whole thing down
+# (success path only — HOLD paths above keep the console alive).
+g=/sys/kernel/config/usb_gadget/l4t
+if [ -d "$g" ]; then
+    echo "" > "$g/UDC" 2>/dev/null
+    rm -f "$g/configs/c.1/rndis.usb0" "$g/configs/c.1/acm.GS0" 2>/dev/null
+    rm -f "$g/os_desc/c.1" 2>/dev/null
+    rmdir "$g/configs/c.1/strings/0x409" "$g/configs/c.1" 2>/dev/null
+    rmdir "$g/functions/rndis.usb0" "$g/functions/acm.GS0" 2>/dev/null
+    rmdir "$g/strings/0x409" "$g" 2>/dev/null
+    [ -d "$g" ] && klog "warn: gadget teardown incomplete — rootfs usb0 may need a re-plug"
+fi
+
+klog "switch_root -> JP5 ($INIT)"
+umount /sys/kernel/config 2>/dev/null
+umount /proc /sys 2>/dev/null
+exec switch_root -c /dev/console /newroot "$INIT"

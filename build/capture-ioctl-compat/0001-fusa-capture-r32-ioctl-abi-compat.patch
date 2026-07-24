@@ -1,0 +1,288 @@
+From: CyberDog JP5 port <cyberdog@local>
+Date: Sat, 25 Jul 2026 00:00:00 +0000
+Subject: [PATCH] media: fusa-capture: r32 (JetPack 4) userspace IOCTL ABI compat
+
+The factory CyberDog camera userspace (libargus / nvargus-daemon, JetPack 4)
+runs in a chroot on the JetPack 5 (L4T r35.6.4 / 5.10.216) kernel.  Three
+VI/ISP channel IOCTL payload structs changed size between r32 and r35 while
+keeping the same _IOC_NR(), so the r32 caller lands in the correct switch case
+and the handler then copies the r35 sizeof() from/to the smaller r32 buffer:
+
+  struct vi_capture_setup  40 -> 88 B   over-read + total field misalignment
+                                        (vi2_channel_mask inserted at off 16)
+  struct vi_capture_info   40 -> 48 B   8-byte over-write past user buffer
+  struct isp_capture_setup 32 -> 40 B   over-read (append-only)
+  struct isp_capture_info  16 -> 24 B   8-byte over-write past user buffer
+
+Split on _IOC_SIZE(cmd): the native r35 path is byte-for-byte unchanged, the
+r32-sized payload is translated (vi_capture_setup) or length-clamped (the
+three append-only structs).
+
+Fields that exist only in r35 are synthesised in the vi_capture_setup
+translation; see the in-tree comment for the justification of each.  In
+particular csi_stream_id/virtual_channel_id are set to 0 (in range, and not
+NVCSI_STREAM_INVALID_ID so the WARN_ON in vi_capture_setup() does not fire) -
+r32 establishes the NVCSI binding later, via the CAPTURE_PHY_STREAM_OPEN_REQ
+control message that vi_capture_control_message_from_user() already snoops.
+
+No r35-native code path changes behaviour.
+---
+--- a/drivers/media/platform/tegra/camera/fusa-capture/capture-vi-channel.c	2026-07-25 01:58:52
++++ b/drivers/media/platform/tegra/camera/fusa-capture/capture-vi-channel.c	2026-07-25 01:59:54
+@@ -180,6 +180,124 @@
+ 
+ /** @} */
+ 
++/**
++ * @defgroup VI_CHANNEL_IOCTLS_R32_COMPAT
++ *
++ * @brief L4T r32 (JetPack 4) userspace ABI compatibility layer.
++ *
++ * The factory CyberDog camera userspace (libargus / nvargus-daemon) is built
++ * against the r32 <media/capture.h> headers.  Two VI channel IOCTL payload
++ * structs changed size between r32 and r35:
++ *
++ *   struct vi_capture_setup : 40 B (r32) -> 88 B (r35)
++ *   struct vi_capture_info  : 40 B (r32) -> 48 B (r35)
++ *
++ * The IOCTL dispatcher below switches on _IOC_NR() only, so an r32 caller
++ * still lands in the right case; but the handler then copies the r35
++ * @em sizeof from/to the (smaller) r32 user buffer.  For SETUP that is an
++ * over-read plus total field misalignment (r35 inserts vi2_channel_mask at
++ * offset 16, shifting every subsequent field); for GET_INFO it is an 8-byte
++ * over-write past the end of the user buffer.
++ *
++ * The helpers below split on _IOC_SIZE(cmd): a native r35 payload takes the
++ * pre-existing code path byte-for-byte, an r32-sized payload is translated
++ * field by field.
++ *
++ * @{
++ */
++
++/** Size of the r32 struct vi_capture_setup payload [byte]. */
++#define VI_CAPTURE_SETUP_SIZE_R32	40U
++
++/**
++ * @brief r32 (JetPack 4) layout of struct vi_capture_setup.
++ *
++ * Verbatim from r32 kernel/nvidia/include/media/capture.h.  Kept private to
++ * this translation unit: it is a wire-format replica, not a kernel API.
++ */
++struct vi_capture_setup_r32 {
++	uint32_t channel_flags;
++	uint32_t error_mask_correctable;
++	uint64_t vi_channel_mask;
++	uint32_t queue_depth;
++	uint32_t request_size;
++	union {
++		uint32_t mem;
++		uint64_t iova;
++	};
++	uint8_t slvsec_stream_main;
++	uint8_t slvsec_stream_sub;
++	uint16_t __pad_slvsec1;
++	uint32_t error_mask_uncorrectable;
++} __VI_CAPTURE_ALIGN;
++
++/**
++ * @brief Read a struct @ref vi_capture_setup from user-space, translating an
++ * r32-sized payload into the r35 layout.
++ *
++ * Fields that exist only in r35 are synthesised:
++ *  - @a vi2_channel_mask : T194 has a single VI unit, so the 2nd VI mask is
++ *    left invalid (0); vi_instance_table[] maps every NVCSI stream to
++ *    VI_UNIT_VI on this SoC, so vi_capture_setup() never validates it.
++ *  - @a csi_stream_id / @a virtual_channel_id : r32 does not carry the NVCSI
++ *    binding in the channel setup; it is established later by the
++ *    CAPTURE_PHY_STREAM_OPEN_REQ / CSI_STREAM_TPG_START_REQ control messages,
++ *    which vi_capture_control_message_from_user() snoops to fill
++ *    capture->stream_id / ->virtual_channel_id.  Both are therefore set to 0,
++ *    which is in range (< MAX_NVCSI_STREAM_IDS / < MAX_VIRTUAL_CHANNEL_PER_STREAM)
++ *    and, critically, is NOT NVCSI_STREAM_INVALID_ID (0xFFFF) so the
++ *    WARN_ON() in vi_capture_setup() does not fire.
++ *  - @a csi_port : NVCSI_PORT_UNSPECIFIED, matching what vi_capture_init()
++ *    initialises capture->csi_port to; the real port arrives with
++ *    CAPTURE_PHY_STREAM_OPEN_REQ.
++ *  - @a stop_on_error_notify_bits / @a reserved : zeroed.
++ *
++ * @param[in]	ptr	User-space payload pointer
++ * @param[in]	cmd	IOCTL command (only _IOC_SIZE() is used)
++ * @param[out]	setup	r35 setup struct to fill
++ *
++ * @returns	0 (success), -EFAULT (failure)
++ */
++static int vi_capture_setup_copy_from_user(
++	const void __user *ptr,
++	unsigned int cmd,
++	struct vi_capture_setup *setup)
++{
++	struct vi_capture_setup_r32 r32;
++
++	BUILD_BUG_ON(sizeof(struct vi_capture_setup_r32) !=
++			VI_CAPTURE_SETUP_SIZE_R32);
++
++	if (_IOC_SIZE(cmd) != VI_CAPTURE_SETUP_SIZE_R32) {
++		/* native r35 caller: unchanged behaviour */
++		if (copy_from_user(setup, ptr, sizeof(*setup)) != 0U)
++			return -EFAULT;
++		return 0;
++	}
++
++	if (copy_from_user(&r32, ptr, sizeof(r32)) != 0U)
++		return -EFAULT;
++
++	(void)memset(setup, 0, sizeof(*setup));
++	setup->channel_flags = r32.channel_flags;
++	setup->error_mask_correctable = r32.error_mask_correctable;
++	setup->vi_channel_mask = r32.vi_channel_mask;
++	setup->vi2_channel_mask = 0U;
++	setup->queue_depth = r32.queue_depth;
++	setup->request_size = r32.request_size;
++	setup->mem = r32.mem;
++	setup->slvsec_stream_main = r32.slvsec_stream_main;
++	setup->slvsec_stream_sub = r32.slvsec_stream_sub;
++	setup->csi_stream_id = 0U;
++	setup->virtual_channel_id = 0U;
++	setup->csi_port = NVCSI_PORT_UNSPECIFIED;
++	setup->error_mask_uncorrectable = r32.error_mask_uncorrectable;
++
++	return 0;
++}
++
++/** @} */
++
+ void vi_capture_request_unpin(
+ 	struct tegra_vi_channel *chan,
+ 	uint32_t buffer_index)
+@@ -412,8 +530,15 @@
+ 	case _IOC_NR(VI_CAPTURE_SETUP): {
+ 		struct vi_capture_setup setup;
+ 
+-		if (copy_from_user(&setup, ptr, sizeof(setup)))
++		/*
++		 * r32-compat: an r32 userspace passes a 40-byte payload; the
++		 * helper translates it, a native r35 payload is copied exactly
++		 * as before.
++		 */
++		err = vi_capture_setup_copy_from_user(ptr, cmd, &setup);
++		if (err < 0)
+ 			break;
++		err = -EFAULT;
+ 
+ 		if (chan->drv->use_legacy_path == false) {
+ 			vi_get_nvhost_device(chan, &setup);
+@@ -521,6 +646,18 @@
+ 
+ 	case _IOC_NR(VI_CAPTURE_GET_INFO): {
+ 		struct vi_capture_info info;
++		/*
++		 * r32-compat: struct vi_capture_info grew 40 -> 48 bytes
++		 * (trailing vi2_channel_mask).  Clamp the write-back to the
++		 * size the caller's ABI declares so an r32 client does not get
++		 * 8 bytes scribbled past the end of its buffer.  For a native
++		 * r35 caller _IOC_SIZE(cmd) == sizeof(info), so this is a
++		 * no-op.  All r32 fields are at identical offsets, so the
++		 * truncated copy is a correct r32 response.
++		 */
++		size_t copy_size = min_t(size_t, (size_t)_IOC_SIZE(cmd),
++					sizeof(info));
++
+ 		(void)memset(&info, 0, sizeof(info));
+ 
+ 		err = vi_capture_get_info(chan, &info);
+@@ -528,7 +665,7 @@
+ 			dev_err(chan->dev, "vi capture get info failed\n");
+ 			break;
+ 		}
+-		if (copy_to_user(ptr, &info, sizeof(info)))
++		if (copy_to_user(ptr, &info, copy_size))
+ 			err = -EFAULT;
+ 		break;
+ 	}
+--- a/drivers/media/platform/tegra/camera/fusa-capture/capture-isp-channel.c	2026-07-25 01:58:52
++++ b/drivers/media/platform/tegra/camera/fusa-capture/capture-isp-channel.c	2026-07-25 02:00:40
+@@ -207,6 +207,40 @@
+  */
+ #define ISP_CAPTURE_BUFFER_REQUEST \
+ 	_IOW('I', 11, struct isp_buffer_req)
++
++/** @} */
++
++/**
++ * @defgroup ISP_CHANNEL_IOCTLS_R32_COMPAT
++ *
++ * @brief L4T r32 (JetPack 4) userspace ABI compatibility layer.
++ *
++ * The factory CyberDog camera userspace is built against the r32
++ * <media/capture_isp.h> headers.  Two ISP channel IOCTL payload structs grew
++ * between r32 and r35, in both cases by @em appending fields (no field moved):
++ *
++ *   struct isp_capture_setup : 32 B (r32) -> 40 B (r35)
++ *       + error_mask_correctable, error_mask_uncorrectable
++ *   struct isp_capture_info  : 16 B (r32) -> 24 B (r35)
++ *       + channel_id (plus tail padding to the 8-byte alignment)
++ *
++ * The dispatcher switches on _IOC_NR() only, so an r32 caller reaches the
++ * right case and the handler then copies the r35 @em sizeof from/to the
++ * smaller r32 user buffer: an over-read for SETUP, an 8-byte over-write past
++ * the end of the user buffer for GET_INFO.  Because the layouts are prefix
++ * compatible, clamping the copy length to the size declared in the IOCTL
++ * command is a complete and correct translation; the r35-only tail is left
++ * zeroed (SETUP) or simply not reported (GET_INFO).
++ *
++ * A native r35 caller has _IOC_SIZE(cmd) == sizeof(struct), so both clamps are
++ * provably no-ops on the r35 path.
++ *
++ * The two clamps live inline in the ISP_CAPTURE_SETUP / ISP_CAPTURE_GET_INFO
++ * cases of isp_channel_ioctl(); no replica structs are needed because the
++ * layouts are prefix compatible.
++ *
++ * @{
++ */
+ 
+ /** @} */
+ 
+@@ -404,8 +438,18 @@
+ 	switch (_IOC_NR(cmd)) {
+ 	case _IOC_NR(ISP_CAPTURE_SETUP): {
+ 		struct isp_capture_setup setup;
++		/*
++		 * r32-compat: clamp the read to what the caller's ABI
++		 * declares (32 B for r32, sizeof(setup) for r35) and zero the
++		 * r35-only tail (error_mask_correctable /
++		 * error_mask_uncorrectable), which r32 does not carry.
++		 */
++		size_t copy_size = min_t(size_t, (size_t)_IOC_SIZE(cmd),
++					sizeof(setup));
+ 
+-		if (copy_from_user(&setup, ptr, sizeof(setup)))
++		(void)memset(&setup, 0, sizeof(setup));
++
++		if (copy_from_user(&setup, ptr, copy_size))
+ 			break;
+ 		err = isp_capture_setup(chan, &setup);
+ 		if (err)
+@@ -437,6 +481,14 @@
+ 
+ 	case _IOC_NR(ISP_CAPTURE_GET_INFO): {
+ 		struct isp_capture_info info;
++		/*
++		 * r32-compat: clamp the write-back so a 16-byte r32 buffer is
++		 * not overrun by the 24-byte r35 struct.  The r32 fields (the
++		 * syncpts sub-struct) occupy the same leading 16 bytes.
++		 */
++		size_t copy_size = min_t(size_t, (size_t)_IOC_SIZE(cmd),
++					sizeof(info));
++
+ 		(void)memset(&info, 0, sizeof(info));
+ 
+ 		err = isp_capture_get_info(chan, &info);
+@@ -444,7 +496,7 @@
+ 			dev_err(chan->isp_dev, "isp capture get info failed\n");
+ 			break;
+ 		}
+-		if (copy_to_user(ptr, &info, sizeof(info)))
++		if (copy_to_user(ptr, &info, copy_size))
+ 			err = -EFAULT;
+ 		break;
+ 	}

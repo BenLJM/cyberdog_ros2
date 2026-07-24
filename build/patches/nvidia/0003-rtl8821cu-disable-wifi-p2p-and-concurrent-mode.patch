@@ -1,0 +1,50 @@
+From b2e15bb9f67dff798a74e50989bfe95476463307 Mon Sep 17 00:00:00 2001
+From: Zhibin Wu <zbwu86@gmail.com>
+Date: Fri, 3 Jun 2022 20:33:45 +0800
+Subject: [PATCH 3/5] rtl8821cu disable wifi p2p and concurrent mode
+
+---
+ drivers/net/wireless/realtek/rtl8821cu/Makefile           | 4 ++--
+ drivers/net/wireless/realtek/rtl8821cu/include/autoconf.h | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/Makefile b/drivers/net/wireless/realtek/rtl8821cu/Makefile
+index 1f6845221..49768c3b5 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/Makefile
++++ b/drivers/net/wireless/realtek/rtl8821cu/Makefile
+@@ -1308,8 +1308,8 @@ KVER := $(shell uname -r)
+ KSRC := /lib/modules/$(KVER)/build
+ EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN
+ EXTRA_CFLAGS += -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT
+-EXTRA_CFLAGS += -DCONFIG_CONCURRENT_MODE
+-EXTRA_CFLAGS += -DRTW_P2P_GROUP_INTERFACE=1
++# EXTRA_CFLAGS += -DCONFIG_CONCURRENT_MODE
++# EXTRA_CFLAGS += -DRTW_P2P_GROUP_INTERFACE=1
+ EXTRA_CFLAGS += -Wno-error=date-time
+ MODULE_NAME = rtl8821cu
+ endif
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/include/autoconf.h b/drivers/net/wireless/realtek/rtl8821cu/include/autoconf.h
+index bed2a2712..baf6b1701 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/include/autoconf.h
++++ b/drivers/net/wireless/realtek/rtl8821cu/include/autoconf.h
+@@ -139,7 +139,7 @@
+ 	#define CONFIG_FIND_BEST_CHANNEL
+ #endif
+ 
+-#define CONFIG_P2P
++// #define CONFIG_P2P
+ #ifdef CONFIG_P2P
+ 	/* The CONFIG_WFD is for supporting the Wi-Fi display */
+ 	#define CONFIG_WFD
+@@ -171,7 +171,7 @@
+ 
+ #define CONFIG_SKB_COPY	/* amsdu */
+ 
+-#define CONFIG_RTW_LED
++// #define CONFIG_RTW_LED
+ #ifdef CONFIG_RTW_LED
+ 	#define CONFIG_RTW_SW_LED
+ 	#ifdef CONFIG_RTW_SW_LED
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,9 @@
+config XIAOMI_GPS_UART_DRIVER
+	tristate "Xiaomi GPS uart Driver"
+	depends on OF_GPIO && REGULATOR
+	default m
+	help
+	  Support for XIAOMI GPS uart driver (CyberDog BCM4775 GNSS
+	  power/standby control; NMEA/Bream data flows over the normal
+	  tegra-hsuart ttyTHS0, this driver only sequences the rails and
+	  exposes /sys/devices/bcm4775/nstandby).

@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * CyberDog (Xiaomi mi-k91, Jetson Xavier NX / p3668 + p2151) RCE camera RTCPU:
+ * select the LEGACY shared-mailbox HSP protocol ("nvidia,tegra186-hsp-mailbox",
+ * SM5 / RTCPU_COMMAND) instead of the R35 default HSP-VM (SM6) protocol, so the
+ * R35 kernel matches the factory R32-era RCE firmware in QSPI (zero-flash).
+ *
+ * Pairs with the driver patch
+ *   0001-hsp-mailbox-client-legacy-sm5-protocol.patch
+ * (adds the SM5 command layer + legacy fallback in camrtc_hsp_probe()).
+ *
+ * KEY INSIGHT (see PORT-NOTES.md): the R32 legacy "pair" is FULL-DUPLEX over
+ * TWO shared mailboxes, index N and N^1 -- from the R32 driver
+ * tegra186-hsp.c: pair->rx = SM_RX(N), pair->tx = SM_TX(N ^ 1). So it maps
+ * cleanly onto the stock mainline generic mailbox driver (drivers/mailbox/
+ * tegra-hsp.c) with plain unidirectional SM channels -- NO driver-core change.
+ *
+ * JP4 live-DT legacy node: nvidia,hsp-shared-mailbox = <&hsp_rce 1>, <&hsp_rce 6>
+ * ("ivc-pair","cmd-pair"), which the R32 driver expands to:
+ *   ivc:  rx = SM_RX(1)  (RCE->VM) ,  tx = SM_TX(1^1=0) (VM->RCE)
+ *   cmd:  rx = SM_RX(6)  (RCE->VM) ,  tx = SM_TX(6^1=7) (VM->RCE)
+ * We reproduce exactly those four mailboxes via the generic "mboxes" binding.
+ *
+ * Include from tegra194-p3668-0001-p2151-0000.dts AFTER tegra194-camera.dtsi
+ * (pulled in via common/tegra194-p2151-0000.dtsi) so &tegra_rce / &hsp_rce exist.
+ */
+
+#include <dt-bindings/soc/nvidia,tegra186-hsp.h>
+
+&tegra_rce {
+	/*
+	 * Disable every HSP-VM (SM6) channel + the CEM channel.
+	 *
+	 * 1) of_get_compatible_child() returns the FIRST "nvidia,tegra-camrtc-
+	 *    hsp-vm" child (hsp-vm1) regardless of status, so disabling hsp-vm1
+	 *    makes camrtc_hsp_vm_probe()'s of_device_is_available() fail ->
+	 *    returns -ENOTSUPP -> camrtc_hsp_probe() runs the legacy fallback.
+	 *    (vm2/vm3 already disabled in the SoC dtsi; set here for clarity.)
+	 *
+	 * 2) MANDATORY for mailbox availability. The four mailboxes the legacy
+	 *    pairs need are exactly the ones vm1 + cem occupy:
+	 *        hsp-vm1 = SM_TX(0), SM_RX(1)  == legacy ivc tx0 / rx1
+	 *        hsp-cem = SM_RX(6), SM_TX(7)  == legacy cmd rx6 / tx7
+	 *    Disabling both frees SM 0,1,6,7 for the legacy node below.
+	 */
+	hsp-vm1 {
+		status = "disabled";
+	};
+
+	hsp-vm2 {
+		status = "disabled";
+	};
+
+	hsp-vm3 {
+		status = "disabled";
+	};
+
+	hsp-cem {
+		status = "disabled";
+	};
+
+	/*
+	 * Re-express the legacy "hsp" child (already present in
+	 * tegra194-camera.dtsi) using the GENERIC mailbox binding so the mbox-
+	 * client driver can request the four SM channels by name. Delete the old
+	 * nvidia,hsp-shared-mailbox properties it inherits from the SoC dtsi.
+	 *
+	 * Mailbox map (must match camrtc_hsp_cmd_probe mbox-names + the R32 FW):
+	 *   cmd-rx = SM_RX(6)  RCE -> VM  (command responses)
+	 *   cmd-tx = SM_TX(7)  VM  -> RCE  (commands)
+	 *   ivc-rx = SM_RX(1)  RCE -> VM  (IVC doorbell in)
+	 *   ivc-tx = SM_TX(0)  VM  -> RCE  (IVC doorbell out)
+	 */
+	hsp {
+		compatible = "nvidia,tegra186-hsp-mailbox";
+		/delete-property/ nvidia,hsp-shared-mailbox;
+		/delete-property/ nvidia,hsp-shared-mailbox-names;
+		mboxes =
+			<&hsp_rce TEGRA_HSP_MBOX_TYPE_SM TEGRA_HSP_SM_RX(6)>,
+			<&hsp_rce TEGRA_HSP_MBOX_TYPE_SM TEGRA_HSP_SM_TX(7)>,
+			<&hsp_rce TEGRA_HSP_MBOX_TYPE_SM TEGRA_HSP_SM_RX(1)>,
+			<&hsp_rce TEGRA_HSP_MBOX_TYPE_SM TEGRA_HSP_SM_TX(0)>;
+		mbox-names = "cmd-rx", "cmd-tx", "ivc-rx", "ivc-tx";
+		status = "okay";
+	};
+};
+
+/*
+ * ------------------------------------------------------------------------
+ * CH_SETUP fix: drop the "diag" IVC channel the factory R32 FW lacks.
+ * ------------------------------------------------------------------------
+ * R35's tegra194-camera.dtsi adds /camera-ivc-channels/diag@5
+ * (compatible "nvidia,tegra186-camera-diagnostics", nvidia,service = "diag"),
+ * a service that did NOT exist in the CyberDog's factory R32-era RCE firmware
+ * (proven: `strings qspi-backup-factory.bin` finds echo/debug/capture/
+ * capture-control but ZERO "diag"; the JP4 working DT has no diag channel).
+ *
+ * At boot, tegra_ivc_bus_boot_sync() sends ONE CH_SETUP per region whose
+ * config area holds the chain of camrtc_tlv_ivc_setup TLVs that ivc-bus.c
+ * builds from these child nodes. The RCE FW walks the chain and, on the
+ * unknown "diag" service, returns RTCPU_CMD_ERROR / RTCPU_CH_ERR_NO_SERVICE
+ * (value 128, see camrtc-channels.h). That surfaces as:
+ *     tegra-ivc-bus ...: IOVM setup error: 128
+ *     ... rtcpu ...: ivc-bus boot sync failed: -5
+ * and no camera IVC/capture channel ever becomes ready.
+ *
+ * ivc-bus.c (tegra_ivc_bus_start) skips children with status = "disabled",
+ * so disabling diag@5 omits its TLV. The config region then advertises
+ * exactly the five services the R32 FW implements
+ * (echo, debug, debug, capture-control, capture) and CH_SETUP succeeds.
+ * diag is telemetry-only; the capture path (TAKE_PICTURE) does not use it.
+ *
+ * NB: the CH_SETUP *command* (RTCPU_COMMAND(CH_SETUP, iova>>8)) our legacy
+ * hsp-mailbox-client backport sends is byte-identical to R32's
+ * tegra_camrtc_iovm_setup() -- the 128 was never a command-sequence bug.
+ */
+&{/camera-ivc-channels/diag@5} {
+	status = "disabled";
+};

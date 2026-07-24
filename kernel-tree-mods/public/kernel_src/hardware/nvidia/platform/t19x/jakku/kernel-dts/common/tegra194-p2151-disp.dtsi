@@ -1,0 +1,61 @@
+/*
+ * tegra194-p2151-disp.dtsi:
+ *
+ * Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ *
+ * athena uses 1 display heads out of the 4 available on t194:
+ *	fb0: Head0->SOR1->HDMI
+ * Each display head is assigned three windows each.
+ */
+
+#include <dt-bindings/display/tegra-dc.h>
+#include <dt-bindings/display/tegra-panel.h>
+#include <t19x-common-platforms/tegra194-hdmi.dtsi>
+#include <t19x-common-platforms/tegra194-dp.dtsi>
+#include "tegra194-fixed-regulator-p2151-0000.dtsi"
+#include "tegra194-spmic-p3668.dtsi"
+
+&head0 {
+	status = "okay";
+	nvidia,fb-bpp = <32>;
+	nvidia,fbmem-size = <16588800>; /* 1080P (1920*1080) 32bpp double buffered */
+	nvidia,fb-flags = <TEGRA_FB_FLIP_ON_PROBE>;
+	win-mask = <0x7>;
+	nvidia,fb-win = <0>;
+	nvidia,dc-connector = <&sor1>;
+	nvidia,dc-flags = <TEGRA_DC_FLAG_ENABLED>;
+	avdd_hdmi-supply = <&p3668_spmic_sd0>; /* 1v0 */
+	avdd_hdmi_pll-supply = <&p3668_spmic_sd1>; /* 1v8 */
+	vdd_hdmi_5v0-supply = <&vdd_hdmi_5v0>; /* 5v0 */
+};
+
+&sor1 {
+	status = "okay";
+	nvidia,active-panel = <&sor1_hdmi_display>;
+	nvidia,sor-hdcp-not-supported;
+};
+
+&sor1_hdmi_display {
+	status = "okay";
+	disp-default-out {
+		nvidia,out-flags = <TEGRA_DC_OUT_HOTPLUG_LOW>;
+	};
+};
+
+&dpaux1 {
+	status = "okay";
+};
+
+&tegra_cec {
+	status = "okay";
+};

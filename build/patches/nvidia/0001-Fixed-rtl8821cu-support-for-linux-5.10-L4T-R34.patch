@@ -1,0 +1,402 @@
+From 204ac419613b73ac20b9a093217a7e463ef65ebe Mon Sep 17 00:00:00 2001
+From: Zhibin Wu <zbwu86@gmail.com>
+Date: Tue, 24 May 2022 18:48:32 +0800
+Subject: [PATCH 1/5] Fixed rtl8821cu support for linux-5.10/L4T R34
+
+---
+ .../net/wireless/realtek/rtl8821cu/Makefile   |  2 +
+ .../realtek/rtl8821cu/core/rtw_security.c     |  6 ++
+ .../realtek/rtl8821cu/include/rtw_security.h  |  6 --
+ .../rtl8821cu/os_dep/linux/ioctl_cfg80211.c   | 48 +++++++++++
+ .../rtl8821cu/os_dep/linux/ioctl_cfg80211.h   | 20 +++--
+ .../rtl8821cu/os_dep/linux/ioctl_linux.c      |  2 +
+ .../realtek/rtl8821cu/os_dep/linux/rtw_proc.c | 83 +++++++++++++++++--
+ .../realtek/rtl8821cu/os_dep/linux/rtw_proc.h |  6 ++
+ 8 files changed, 153 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/Makefile b/drivers/net/wireless/realtek/rtl8821cu/Makefile
+index 1124d672c..1f6845221 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/Makefile
++++ b/drivers/net/wireless/realtek/rtl8821cu/Makefile
+@@ -14,6 +14,8 @@ EXTRA_CFLAGS += -Wno-unused-variable
+ #EXTRA_CFLAGS += -Wno-unused-function
+ #EXTRA_CFLAGS += -Wno-unused
+ #EXTRA_CFLAGS += -Wno-uninitialized
++EXTRA_CFLAGS += -Wno-implicit-fallthrough
++EXTRA_CFLAGS += -Wno-vla
+ 
+ GCC_VER_49 := $(shell echo `$(CC) -dumpversion | cut -f1-2 -d.` \>= 4.9 | bc )
+ ifeq ($(GCC_VER_49),1)
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/core/rtw_security.c b/drivers/net/wireless/realtek/rtl8821cu/core/rtw_security.c
+index 58075211a..eb2f6cd6d 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/core/rtw_security.c
++++ b/drivers/net/wireless/realtek/rtl8821cu/core/rtw_security.c
+@@ -2132,6 +2132,12 @@ BIP_exit:
+ 
+ #ifndef PLATFORM_FREEBSD
+ #if defined(CONFIG_TDLS)
++struct sha256_state {
++	u64 length;
++	u32 state[8], curlen;
++	u8 buf[64];
++};
++
+ /* compress 512-bits */
+ static int sha256_compress(struct sha256_state *md, unsigned char *buf)
+ {
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/include/rtw_security.h b/drivers/net/wireless/realtek/rtl8821cu/include/rtw_security.h
+index 0adc7000e..c60d5824e 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/include/rtw_security.h
++++ b/drivers/net/wireless/realtek/rtl8821cu/include/rtw_security.h
+@@ -249,12 +249,6 @@ struct security_priv {
+ #define SEC_IS_BIP_KEY_INSTALLED(sec) _FALSE
+ #endif
+ 
+-struct sha256_state {
+-	u64 length;
+-	u32 state[8], curlen;
+-	u8 buf[64];
+-};
+-
+ #define GET_ENCRY_ALGO(psecuritypriv, psta, encry_algo, bmcst)\
+ 	do {\
+ 		switch (psecuritypriv->dot11AuthAlgrthm) {\
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.c b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.c
+index cefc6add4..3a04bf285 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.c
++++ b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.c
+@@ -234,8 +234,11 @@ static u8 rtw_chbw_to_cfg80211_chan_def(struct wiphy *wiphy, struct cfg80211_cha
+ 	}
+ 
+ 	chdef->chan = chan;
++	chdef->freq1_offset = chan->freq_offset;
+ 	chdef->center_freq1 = cfreq;
+ 	chdef->center_freq2 = 0;
++	chdef->edmg.bw_config = 0;
++	chdef->edmg.channels = 0;
+ 
+ 	ret = _SUCCESS;
+ 
+@@ -7524,6 +7527,7 @@ exit:
+ 	return ret;
+ }
+ 
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
+ static void cfg80211_rtw_mgmt_frame_register(struct wiphy *wiphy,
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0))
+ 	struct wireless_dev *wdev,
+@@ -7578,6 +7582,46 @@ static void cfg80211_rtw_mgmt_frame_register(struct wiphy *wiphy,
+ exit:
+ 	return;
+ }
++#else
++static void cfg80211_rtw_update_mgmt_frame_register(
++	struct wiphy *wiphy,
++	struct wireless_dev *wdev,
++	struct mgmt_frame_regs *upd)
++{
++	struct net_device *ndev;
++	_adapter *padapter;
++	struct rtw_wdev_priv *pwdev_priv;
++	u32 rtw_stypes_mask = 0;
++	u32 rtw_mstypes_mask = 0;
++
++	ndev = wdev_to_ndev(wdev);
++
++	if (ndev == NULL)
++		goto exit;
++
++	padapter = (_adapter *)rtw_netdev_priv(ndev);
++	pwdev_priv = adapter_wdev_data(padapter);
++
++	rtw_stypes_mask = BIT(IEEE80211_STYPE_AUTH >> 4);
++
++#ifdef CONFIG_DEBUG_CFG80211
++	RTW_INFO(FUNC_ADPT_FMT " global_stypes:0x%08x interface_stypes:0x%08x\n",
++		FUNC_ADPT_ARG(padapter), upd->global_stypes, upd->interface_stypes);
++	RTW_INFO(FUNC_ADPT_FMT " global_mcast_stypes:0x%08x interface_mcast_stypes:0x%08x\n",
++		FUNC_ADPT_ARG(padapter), upd->global_mcast_stypes, upd->interface_mcast_stypes);
++	RTW_INFO(FUNC_ADPT_FMT " old_regs:0x%08x new_regs:0x%08x\n",
++		FUNC_ADPT_ARG(padapter), pwdev_priv->mgmt_regs,
++		(upd->interface_stypes & rtw_stypes_mask));
++#endif
++	if (pwdev_priv->mgmt_regs !=
++			(upd->interface_stypes & rtw_stypes_mask)) {
++		pwdev_priv->mgmt_regs = (upd->interface_stypes & rtw_stypes_mask);
++	}
++
++exit:
++	return;
++}
++#endif
+ 
+ #if defined(CONFIG_TDLS) && (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0))
+ static int cfg80211_rtw_tdls_mgmt(struct wiphy *wiphy,
+@@ -9954,7 +9998,11 @@ static struct cfg80211_ops rtw_cfg80211_ops = {
+ 
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
+ 	.mgmt_tx = cfg80211_rtw_mgmt_tx,
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
+ 	.mgmt_frame_register = cfg80211_rtw_mgmt_frame_register,
++#else
++	.update_mgmt_frame_registrations = cfg80211_rtw_update_mgmt_frame_register,
++#endif
+ #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 34) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 35))
+ 	.action = cfg80211_rtw_mgmt_tx,
+ #endif
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.h b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.h
+index 5dbb3e7df..5c6d47c7b 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.h
++++ b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_cfg80211.h
+@@ -168,8 +168,14 @@ struct rtw_wdev_priv {
+ 	bool block_scan;
+ 	bool power_mgmt;
+ 
+-	/* report mgmt_frame registered */
+-	u16 report_mgmt;
++	/**
++	 * mgmt_regs: bitmap of management frame subtypes registered for the
++	 * 	given interface
++	 * mcast_mgmt_regs: mcast RX is needed on this interface for these
++	 * 	subtypes
++	 */
++	u32 mgmt_regs;
++	/* u32 mcast_mgmt_regs; */
+ 
+ 	u8 is_mgmt_tx;
+ 	u16 mgmt_tx_cookie;
+@@ -260,9 +266,13 @@ struct rtw_wiphy_data {
+ #define FUNC_WIPHY_FMT "%s("WIPHY_FMT")"
+ #define FUNC_WIPHY_ARG(wiphy) __func__, WIPHY_ARG(wiphy)
+ 
+-#define SET_CFG80211_REPORT_MGMT(w, t, v) (w->report_mgmt |= BIT(t >> 4))
+-#define CLR_CFG80211_REPORT_MGMT(w, t, v) (w->report_mgmt &= (~BIT(t >> 4)))
+-#define GET_CFG80211_REPORT_MGMT(w, t) ((w->report_mgmt & BIT(t >> 4)) > 0)
++#define SET_CFG80211_MGMT_REGS(w, t) (w |= BIT(t >> 4))
++#define CLR_CFG80211_MGMT_REGS(w, t) (w &= (~BIT(t >> 4)))
++#define GET_CFG80211_MGMT_REGS(w, t) ((w & BIT(t >> 4)) > 0)
++
++#define SET_CFG80211_REPORT_MGMT(w, t) (SET_CFG80211_MGMT_REGS(w->mgmt_regs, t))
++#define CLR_CFG80211_REPORT_MGMT(w, t) (CLR_CFG80211_MGMT_REGS(w->mgmt_regs, t))
++#define GET_CFG80211_REPORT_MGMT(w, t) (GET_CFG80211_MGMT_REGS(w->mgmt_regs, t))
+ 
+ struct wiphy *rtw_wiphy_alloc(_adapter *padapter, struct device *dev);
+ void rtw_wiphy_free(struct wiphy *wiphy);
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_linux.c b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_linux.c
+index f467f7e45..4663abb9c 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_linux.c
++++ b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/ioctl_linux.c
+@@ -12329,6 +12329,7 @@ static iw_handler rtw_private_handler[] = {
+ 	rtw_test,						/* 0x1D */
+ };
+ 
++#ifdef CONFIG_WIRELESS_EXT
+ #if WIRELESS_EXT >= 17
+ static struct iw_statistics *rtw_get_wireless_stats(struct net_device *dev)
+ {
+@@ -12384,6 +12385,7 @@ static struct iw_statistics *rtw_get_wireless_stats(struct net_device *dev)
+ 	return &padapter->iwstats;
+ }
+ #endif
++#endif
+ 
+ #ifdef CONFIG_WIRELESS_EXT
+ struct iw_handler_def rtw_handlers_def = {
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.c b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.c
+index 3ccf8f6df..3eddd8426 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.c
++++ b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.c
+@@ -81,7 +81,7 @@ inline struct proc_dir_entry *rtw_proc_create_dir(const char *name, struct proc_
+ }
+ 
+ inline struct proc_dir_entry *rtw_proc_create_entry(const char *name, struct proc_dir_entry *parent,
+-	const struct file_operations *fops, void * data)
++	const struct rtw_proc_ops *fops, void * data)
+ {
+ 	struct proc_dir_entry *entry;
+ 
+@@ -261,22 +261,39 @@ static ssize_t rtw_drv_proc_write(struct file *file, const char __user *buffer,
+ 	return -EROFS;
+ }
+ 
+-static const struct file_operations rtw_drv_proc_seq_fops = {
++
++static const struct rtw_proc_ops rtw_drv_proc_seq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_drv_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = seq_release,
++	.proc_write = rtw_drv_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_drv_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = seq_release,
+ 	.write = rtw_drv_proc_write,
++#endif
+ };
+ 
+-static const struct file_operations rtw_drv_proc_sseq_fops = {
++static const struct rtw_proc_ops rtw_drv_proc_sseq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_drv_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++	.proc_write = rtw_drv_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_drv_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = single_release,
+ 	.write = rtw_drv_proc_write,
++#endif
+ };
+ 
+ int rtw_drv_proc_init(void)
+@@ -4636,22 +4653,38 @@ static ssize_t rtw_adapter_proc_write(struct file *file, const char __user *buff
+ 	return -EROFS;
+ }
+ 
+-static const struct file_operations rtw_adapter_proc_seq_fops = {
++static const struct rtw_proc_ops rtw_adapter_proc_seq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_adapter_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = seq_release,
++	.proc_write = rtw_adapter_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_adapter_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = seq_release,
+ 	.write = rtw_adapter_proc_write,
++#endif
+ };
+ 
+-static const struct file_operations rtw_adapter_proc_sseq_fops = {
++static const struct rtw_proc_ops rtw_adapter_proc_sseq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_adapter_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++	.proc_write = rtw_adapter_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_adapter_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = single_release,
+ 	.write = rtw_adapter_proc_write,
++#endif
+ };
+ 
+ int proc_get_odm_adaptivity(struct seq_file *m, void *v)
+@@ -4809,22 +4842,38 @@ static ssize_t rtw_odm_proc_write(struct file *file, const char __user *buffer,
+ 	return -EROFS;
+ }
+ 
+-static const struct file_operations rtw_odm_proc_seq_fops = {
++static const struct rtw_proc_ops rtw_odm_proc_seq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_odm_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = seq_release,
++	.proc_write = rtw_odm_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_odm_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = seq_release,
+ 	.write = rtw_odm_proc_write,
++#endif
+ };
+ 
+-static const struct file_operations rtw_odm_proc_sseq_fops = {
++static const struct rtw_proc_ops rtw_odm_proc_sseq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_odm_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++	.proc_write = rtw_odm_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_odm_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = single_release,
+ 	.write = rtw_odm_proc_write,
++#endif
+ };
+ 
+ struct proc_dir_entry *rtw_odm_proc_init(struct net_device *dev)
+@@ -4958,22 +5007,38 @@ static ssize_t rtw_mcc_proc_write(struct file *file, const char __user *buffer,
+ 	return -EROFS;
+ }
+ 
+-static const struct file_operations rtw_mcc_proc_seq_fops = {
++static const struct rtw_proc_ops rtw_mcc_proc_seq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_mcc_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = seq_release,
++	.proc_write = rtw_mcc_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_mcc_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = seq_release,
+ 	.write = rtw_mcc_proc_write,
++#endif
+ };
+ 
+-static const struct file_operations rtw_mcc_proc_sseq_fops = {
++static const struct rtw_proc_ops rtw_mcc_proc_sseq_fops = {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++	.proc_open = rtw_mcc_proc_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++	.proc_write = rtw_mcc_proc_write,
++#else
+ 	.owner = THIS_MODULE,
+ 	.open = rtw_mcc_proc_open,
+ 	.read = seq_read,
+ 	.llseek = seq_lseek,
+ 	.release = single_release,
+ 	.write = rtw_mcc_proc_write,
++#endif
+ };
+ 
+ struct proc_dir_entry *rtw_mcc_proc_init(struct net_device *dev)
+diff --git a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.h b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.h
+index b26f04486..c1e66f7c5 100644
+--- a/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.h
++++ b/drivers/net/wireless/realtek/rtl8821cu/os_dep/linux/rtw_proc.h
+@@ -47,6 +47,12 @@ struct rtw_proc_hdl {
+ 
+ #ifdef CONFIG_PROC_DEBUG
+ 
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
++#define rtw_proc_ops proc_ops
++#else
++#define rtw_proc_ops file_operations
++#endif
++
+ int rtw_drv_proc_init(void);
+ void rtw_drv_proc_deinit(void);
+ struct proc_dir_entry *rtw_adapter_proc_init(struct net_device *dev);
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,26 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * CyberDog JP5 runtime overlay: enable the existing /bcm4775 GPS node
+ * (tegra194-p2151-0000.dtsi ships it with status = "disabled").
+ *
+ * Use EITHER this overlay (no base-DTB rebuild needed):
+ *   sudo cp cyberdog-gps-bcm4775-enable.dtbo /boot/
+ *   add to the JP5 entry in /boot/extlinux/extlinux.conf:
+ *     OVERLAYS /boot/cyberdog-gps-bcm4775-enable.dtbo
+ * OR the tree patch 0003-p2151-enable-bcm4775-gps-node.patch + full-build.sh
+ * (then this overlay is unnecessary).
+ */
+
+/ {
+	overlay-name = "CyberDog BCM4775 GPS enable";
+	compatible = "nvidia,p2151-0000+p3668-0001", "nvidia,tegra194";
+
+	fragment@0 {
+		target-path = "/bcm4775";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};

@@ -1,0 +1,253 @@
+/******************************************************************************
+ * Copyright (C) 2015 Broadcom Corporation
+ *
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ ******************************************************************************/
+/*
+ * CyberDog JP5 port (2026-07-24), from Xiaomi 4.9.201 drivers/gps/bcm_gps_tty.c
+ * (cyberdog_tegra_kernel.git, branch athena).  Ported for 5.10.216-tegra as an
+ * out-of-tree module.  Functional deltas vs 4.9 original:
+ *   - MODULE_DEVICE_TABLE(of, ...) added so udev autoloads on DT "bcm4775"
+ *   - regulator handles kept in priv; probe error paths unwind, remove()
+ *     disables both rails and frees the nstandby GPIO (4.9 was builtin and
+ *     leaked all of it: never unloaded, so it never mattered)
+ *   - kzalloc replaces kmalloc+memset
+ *   - dead commented-out 4.9 code (gps_1v8 / wifi_gpio sysfs blocks) dropped
+ * All log strings, the sysfs node (/sys/devices/bcm4775/nstandby), probe
+ * sequencing (vdd 1v8 -> nstandby high -> 30 ms -> vddgps 3v3) and the raw
+ * GPIO polarity semantics are IDENTICAL to the 4.9 build that shipped on
+ * JP4 (userspace scene_detection depends on them).
+ */
+
+#include <linux/module.h>
+#include <linux/ioport.h>
+#include <linux/device.h>
+#include <linux/tty.h>
+#include <linux/serial.h>
+#include <linux/slab.h>
+#include <linux/errno.h>
+#include <linux/init.h>
+#include <linux/poll.h>
+#include <linux/uaccess.h>
+#include <linux/kernel.h>
+#include <linux/miscdevice.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+
+#include <linux/platform_device.h>
+#include <linux/delay.h>
+#include <linux/console.h>
+#include <linux/clk.h>
+
+#include <linux/tty_flip.h>
+#include <linux/sysrq.h>
+#include <linux/regulator/consumer.h>
+
+#include <linux/serial_core.h>
+
+//--------------------------------------------------------------
+//
+//               Structs
+//
+//--------------------------------------------------------------
+struct bcm_tty_priv
+{
+	int nstandby;
+	struct regulator *vdd;      /* 1v8 rail ("vdd-supply")    */
+	struct regulator *vddgps;   /* 3v3 rail ("vddgps-supply") */
+};
+
+static struct bcm_tty_priv *g_bcm_gps;
+
+static ssize_t bcm_4775_nstandby_show(struct device *dev,
+	   struct device_attribute *attr,
+	   char *buf)
+{
+	int value = 0;
+
+	pr_err("[SSPBBD} bcm_4775_nstandby, read is begion ");
+	value = gpio_get_value_cansleep(g_bcm_gps->nstandby);
+	pr_err("[SSPBBD} bcm_4775_nstandby, value is %d\n ", value);
+	return snprintf(buf, PAGE_SIZE, "%d\n", value);
+}
+
+static ssize_t bcm_4775_nstandby_store(struct device *dev,
+	   struct device_attribute *attr,
+	   const char *buf, size_t count)
+{
+	pr_err("[SSPBBD} bcm_4775_nstandby, gpio is %d\n", g_bcm_gps->nstandby);
+
+	if (gpio_is_valid(g_bcm_gps->nstandby)) {
+		pr_err("!!! SSPBBDbcm gpio nstandby is valid");
+	}
+
+	if (!strncmp("0", buf, 1))
+		gpio_set_value_cansleep(g_bcm_gps->nstandby, 0);
+	else
+		gpio_set_value_cansleep(g_bcm_gps->nstandby, 1);
+	return count;
+}
+
+static DEVICE_ATTR(nstandby, 0660, bcm_4775_nstandby_show, bcm_4775_nstandby_store);
+
+//--------------------------------------------------------------
+//
+//               Module init/exit
+//
+//--------------------------------------------------------------
+static int xiaomi_uart_probe(struct platform_device *pdev)
+{
+	struct bcm_tty_priv *priv;
+	int ret;
+	int nstandby = 0;
+	struct regulator *reg;
+
+	/* Check GPIO# */
+	printk(KERN_ERR "KERN_ERR [SSPBBD] gps probe \n");
+	dev_err(&pdev->dev, "[SSPBBD]: Check platform_data for bcm device\n");
+
+	if (!pdev->dev.of_node) {
+		pr_err("[SSPBBD]: Failed to find of_node\n");
+		return -ENODEV;
+	}
+
+	nstandby = of_get_named_gpio(pdev->dev.of_node, "nstandby-gpio", 0);
+	if (nstandby < 0) {
+		printk(KERN_ERR "KERN_ERR [SSPBBD] nstandby fail result is %d \n", nstandby);
+		printk(KERN_ERR "KERN_ERR [SSPBBD] fail to find OF node nstandby-gpio\n");
+		return -EPROBE_DEFER;
+	}
+	printk(KERN_ERR "[SSPBBD] nstandby=%d\n", nstandby);
+
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	if (!priv) {
+		printk(KERN_ERR "!!!!SSPBBDkmalloc  fail sspbbd gps");
+		return -ENOMEM;
+	}
+	priv->nstandby = nstandby;
+
+	reg = devm_regulator_get(&pdev->dev, "vdd");
+	if (IS_ERR(reg)) {
+		ret = PTR_ERR(reg);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "SSPBBDreg get err: %d\n", ret);
+		goto err_free_priv;
+	}
+	ret = regulator_enable(reg);
+	if (ret) {
+		dev_err(&pdev->dev, "SSPBBDreg en err: %d\n", ret);
+		goto err_free_priv;
+	}
+	priv->vdd = reg;
+
+	ret = gpio_request(nstandby, "nstandby-gpio");
+	if (ret) {
+		printk(KERN_ERR "SSPBBD request GPS NSTANDBY fail %d", ret);
+		goto err_disable_vdd;
+	}
+	ret = gpio_direction_output(nstandby, 1);
+	if (ret) {
+		printk(KERN_ERR "SSPBBD set GPS NSTANDBY as out mode fail %d", ret);
+		goto err_free_gpio;
+	}
+	msleep(30);
+
+	reg = devm_regulator_get(&pdev->dev, "vddgps");
+	if (IS_ERR(reg)) {
+		ret = PTR_ERR(reg);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "SSPBBDreg get err: %d\n", ret);
+		goto err_free_gpio;
+	}
+	ret = regulator_enable(reg);
+	if (ret) {
+		dev_err(&pdev->dev, "SSPBBDreg en err: %d\n", ret);
+		goto err_free_gpio;
+	}
+	priv->vddgps = reg;
+
+	g_bcm_gps = priv;
+	platform_set_drvdata(pdev, priv);
+
+	if (device_create_file(&pdev->dev, &dev_attr_nstandby))
+		pr_err("!!! SSPBBDbcm Unable to create sysfs 4775 nstandby entry");
+
+	return 0;
+
+err_free_gpio:
+	gpio_free(nstandby);
+err_disable_vdd:
+	if (priv->vdd)
+		regulator_disable(priv->vdd);
+err_free_priv:
+	kfree(priv);
+	return ret;
+}
+
+static int xiaomi_uart_remove(struct platform_device *pdev)
+{
+	struct bcm_tty_priv *priv = platform_get_drvdata(pdev);
+
+	device_remove_file(&pdev->dev, &dev_attr_nstandby);
+	if (priv) {
+		/* back into standby, then rails off (reverse of probe) */
+		gpio_set_value_cansleep(priv->nstandby, 0);
+		if (priv->vddgps)
+			regulator_disable(priv->vddgps);
+		if (priv->vdd)
+			regulator_disable(priv->vdd);
+		gpio_free(priv->nstandby);
+		kfree(priv);
+	}
+	g_bcm_gps = NULL;
+	return 0;
+}
+
+static const struct of_device_id match_table[] = {
+	{ .compatible = "bcm4775", },
+	{},
+};
+MODULE_DEVICE_TABLE(of, match_table);
+
+/*
+ * platform driver stuff
+ */
+static struct platform_driver xiaomi_uart_platform_driver = {
+	.probe	= xiaomi_uart_probe,
+	.remove	= xiaomi_uart_remove,
+	.driver	= {
+		.name  = "bcm4775",
+		.of_match_table = match_table,
+	},
+};
+
+static int __init xiaomi_tty_init(void)
+{
+	int ret;
+
+	printk(KERN_ERR "!!! bcm_tty_init  to go");
+	ret = platform_driver_register(&xiaomi_uart_platform_driver);
+	printk(KERN_ERR "!!! platform_driver_register  sspbbd bcm_gps_tty misc_register ret is %d", ret);
+
+	return ret;
+}
+
+static void __exit xiaomi_tty_exit(void)
+{
+	platform_driver_unregister(&xiaomi_uart_platform_driver);
+}
+
+/* builtin: late_initcall_sync as on 4.9; as a module this is module_init() */
+late_initcall_sync(xiaomi_tty_init);
+module_exit(xiaomi_tty_exit);
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("BCM TTY Driver");

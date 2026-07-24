@@ -1,0 +1,258 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * CyberDog (Xiaomi mi-k91, Jetson Xavier NX / p3668 + p2151) audio card for
+ * JetPack 5 / L4T r35.6.4 (kernel 5.10.216).
+ *
+ * Replaces the tegra-alt PLACEHOLDER
+ *   hardware/nvidia/platform/t19x/jakku/kernel-dts/tegra194-mi-k91-audio.dtsi
+ * -- this file MUST be included INSTEAD of it (not in addition to it): the
+ * r35 machine driver iterates *every* child of the sound node after the first
+ * "nvidia-audio-card,dai-link" and fails probe on the placeholder's stale
+ * "nvidia,dai-link-1/2" subnodes ("cpu subnode is missing").
+ *
+ * Include from tegra194-p3668-0001-p2151-0000.dts, AFTER
+ * common/tegra194-p2151-0000.dtsi (we override nodes it defines).
+ *
+ * Card model (primary): "nvidia,tegra186-ape" structured card, bound by
+ *   kernel-5.10/sound/soc/tegra/tegra_machine_driver.c (default JP5 stack,
+ *   same one that drives the Xavier NX devkit).  The generic audio-graph
+ *   card (tegra_sound_graph, "nvidia,tegra186-audio-graph-card") stays
+ *   disabled, but the codec OF-graph endpoints below are already wired so
+ *   flipping it on later is a one-line status change.
+ *
+ * Hardware truth (from the JP4 live DT dump + Xiaomi 4.9 dtsi):
+ *   - RT5680 (ALC5680) smart mic-array codec, gen1_i2c (i2c@3160000) @0x2d,
+ *     on I2S3, TDM dsp_a, 6ch x 16bit @ 16kHz, fsync-width 15, Tegra master.
+ *     8 PDM mics hang off the codec (DMIC L1/R1..L4/R4), NOT off Tegra DMIC.
+ *   - TAS5805M mono speaker amp, gen1_i2c @0x2c, on I2S5, i2s fmt,
+ *     1ch x 16bit @ 16kHz, Tegra master (amp is always a clock slave).
+ *   - Power/enable GPIOs (TCA6424 expanders on the same i2c bus):
+ *       gpio_expand2 (0x22) pin 18 = SND_PA_1V8_EN     (amp DVDD 1V8)
+ *       gpio_expand2 (0x22) pin 19 = SND_CODEC_1V8_EN  (codec AVDD 1V8)
+ *       gpio_expand1 (0x23) pin  7 = SND_PA_PDN        (amp PDN, high = run)
+ *     The Xiaomi-ported codec drivers claim these via *-enable-gpio props
+ *     below and hard-fail probe if they are missing.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+
+/* ------------------------------------------------------------------ */
+/* 1. Power the APE back up.                                          */
+/* common/tegra194-p2151-0000.dtsi force-disables aconnect@2a41000     */
+/* (and tegra_sound) AFTER including tegra194-audio-p3668.dtsi.  The   */
+/* AHUB / ADMAIF / I2S children keep their "okay" from                 */
+/* tegra-platforms-audio-enable.dtsi, so re-opening the parent gate    */
+/* is all that is needed.                                              */
+/* ------------------------------------------------------------------ */
+/ {
+	aconnect@2a41000 {
+		status = "okay";
+	};
+};
+
+/* ------------------------------------------------------------------ */
+/* 2. Sound card ("nvidia,tegra186-ape" from tegra194-audio-p3668.dtsi;*/
+/*    compatible restated defensively in case the tegra-alt            */
+/*    placeholder overwrote it earlier in the include chain).          */
+/*    Card name kept identical to JP4 so ALSA state / scripts keep     */
+/*    working (JP4 nvidia,model = "jetson-xaviernx-ape").              */
+/* ------------------------------------------------------------------ */
+&tegra_sound {
+	status = "okay";
+	compatible = "nvidia,tegra186-ape";
+	nvidia-audio-card,name = "jetson-xaviernx-ape";
+
+	nvidia-audio-card,widgets =
+		"Microphone",	"h1 Int DMIC",
+		"Speaker",	"x Speaker";
+
+	/*
+	 * Routing preserved from JP4 (only the pairs whose widgets exist
+	 * on 5.10 -- the 4.9 x/y/z/m/n/o/a/b/c/d dummy-DIT pairs are gone
+	 * along with the dummy codecs).  Format: "sink", "source".
+	 */
+	nvidia-audio-card,routing =
+		"h1 DMIC L1",	"h1 Int DMIC",
+		"h1 DMIC R1",	"h1 Int DMIC",
+		"h1 DMIC L2",	"h1 Int DMIC",
+		"h1 DMIC R2",	"h1 Int DMIC",
+		"h1 DMIC L3",	"h1 Int DMIC",
+		"h1 DMIC R3",	"h1 Int DMIC",
+		"h1 DMIC L4",	"h1 Int DMIC",
+		"h1 DMIC R4",	"h1 Int DMIC",
+		"x Speaker",	"x OUT";
+};
+
+/* ------------------------------------------------------------------ */
+/* 3. DAI links: override the stock I2S3/I2S5 dummy links.             */
+/*    No bitclock-master/frame-master => Tegra I2S is clock master      */
+/*    (r35 semantics; verified against tegra210_i2s_set_fmt + the      */
+/*    galen rt5658 reference).  JP4 fsync-width=15 has no DT           */
+/*    equivalent on 5.10 -- set it at runtime:                          */
+/*      amixer -c jetsonxaviernxape cset name='I2S3 FSYNC Width' 15    */
+/* ------------------------------------------------------------------ */
+&i2s3_to_codec {
+	link-name = "rt5680-codec";
+	format = "dsp_a";
+	srate = <16000>;
+	num-channel = <6>;
+	bit-format = "s16_le";
+
+	codec {
+		sound-dai = <&rt5680>;
+		prefix = "h1";
+	};
+};
+
+&i2s5_to_codec {
+	link-name = "tas5805-codec";
+	/* format stays "i2s" from the base link */
+	srate = <16000>;
+	num-channel = <1>;
+	bit-format = "s16_le";
+
+	codec {
+		sound-dai = <&tas5805m>;
+		prefix = "x";
+	};
+};
+
+/* ------------------------------------------------------------------ */
+/* 4. Codec nodes: flesh out the (disabled) skeletons from             */
+/*    common/tegra194-p2151-0000.dtsi.                                 */
+/*    - compatible fixed to what the ported drivers match              */
+/*      ("realtek,rt5680"; the p2151 skeleton said rt5679).            */
+/*    - *-enable-gpio props are REQUIRED by the Xiaomi-ported 5.10     */
+/*      drivers (probe returns -EIO without them).                     */
+/*    - #sound-dai-cells is required by the structured card's          */
+/*      sound-dai parsing.                                             */
+/*    - port/endpoint = OF-graph hookup, inert while tegra_sound_graph */
+/*      is disabled; carried for the future audio-graph switch.        */
+/* ------------------------------------------------------------------ */
+&rt5680 {
+	compatible = "realtek,rt5680";
+	#sound-dai-cells = <0>;
+	codec-1v8-enable-gpio = <&gpio_expand2 19 GPIO_ACTIVE_HIGH>;
+	codec-pa-1v8-enable-gpio = <&gpio_expand2 18 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+
+	port {
+		rt5680_ep: endpoint {
+			remote-endpoint = <&i2s3_dap_ep>;
+			link-name = "rt5680-codec";
+		};
+	};
+};
+
+&tas5805m {
+	compatible = "ti,tas5805m";
+	#sound-dai-cells = <0>;
+	pdn-enable-gpio = <&gpio_expand1 7 GPIO_ACTIVE_HIGH>;
+	pa-1v8-enable-gpio = <&gpio_expand2 18 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+
+	port {
+		tas5805m_ep: endpoint {
+			remote-endpoint = <&i2s5_dap_ep>;
+			link-name = "tas5805-codec";
+		};
+	};
+};
+
+/* OF-graph back-references (audio-graph card only; card disabled). */
+&i2s3_dap_ep {
+	dai-format = "dsp_a";
+	remote-endpoint = <&rt5680_ep>;
+};
+
+&i2s5_dap_ep {
+	remote-endpoint = <&tas5805m_ep>;
+};
+
+/* ------------------------------------------------------------------ */
+/* 5. Neutralize the p2151 audio "regulators".                         */
+/*    They wrap the very same expander lines the codec drivers drive   */
+/*    (exp2/18, exp2/19, exp1/7).  With no consumer (the ported        */
+/*    drivers never regulator_get), regulator_late_cleanup would yank  */
+/*    all three lines LOW ~30s after boot, powering the codecs off     */
+/*    mid-flight.  Disable them; GPIO ownership stays with the codec   */
+/*    drivers, exactly like JP4.                                       */
+/* ------------------------------------------------------------------ */
+&dvdd_codec_amp_1v8 {
+	status = "disabled";
+};
+
+&avdd_codec_1v8 {
+	status = "disabled";
+};
+
+&pvdd_amp_12v {
+	status = "disabled";
+};
+
+/* ------------------------------------------------------------------ */
+/* 2. Thermal-zone fixup for NX floorsweeping under legacy cboot.     */
+/* The factory (r32-era) cboot deletes cluster-3 CPUs (cpu@300/301)   */
+/* from the runtime DT on 6-core NX.  map3 in these zones references  */
+/* &cl3_0 which then dangles; r35 of-thermal fails the WHOLE zone     */
+/* ("failed to build thermal zone X: -2"), which in turn makes        */
+/* tegra-bpmp-thermal defer forever => no CPU/GPU thermal zones, and  */
+/* nvfancontrol dies.  Cluster 3 does not exist on NX, so the map is  */
+/* meaningless anyway — delete it from all four affected zones.       */
+/* ------------------------------------------------------------------ */
+/ {
+	thermal-zones {
+		CPU-therm {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+		GPU-therm {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+		AUX-therm {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+		PMIC-Die {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+	};
+};
+
+/* ------------------------------------------------------------------ */
+/* 3. ADSP audio links fixup.  The athena kernel does not build the   */
+/* ADSP audio driver, so the adsp_audio component never registers and */
+/* snd_soc_get_dai_name() makes the whole sound card defer forever.   */
+/* The machine driver skips links whose referenced DAI node is        */
+/* unavailable (of_dai_link_is_available), so disabling adsp_audio    */
+/* silently drops all 40 ADSP dai-links.  Offload/AEC paths are not   */
+/* needed for plain 6ch PCM capture / mono playback.                  */
+/* ------------------------------------------------------------------ */
+/ {
+	aconnect@2a41000 {
+		adsp_audio {
+			status = "disabled";
+		};
+	};
+};
+
+/* ------------------------------------------------------------------ */
+/* 4. clocks-init fixup.  Its first "disable" entry references the    */
+/* aonclk provider, which the legacy (r32) cboot deletes from the     */
+/* runtime DT on this board -> of_clk_get() index 0 defers forever    */
+/* and the two useful BPMP entries never get processed.  Keep only    */
+/* the BPMP clocks (ids 9 and 11).                                    */
+/* ------------------------------------------------------------------ */
+/ {
+	clocks-init {
+		disable {
+			clocks = <&bpmp 9 &bpmp 11>;
+		};
+	};
+};

@@ -1,0 +1,154 @@
+# 小米铁蛋 CyberDog JetPack5 移植 — 交接给新会话（2026-07-19）
+
+你接手一个进行中的项目：把小米铁蛋 CyberDog 1（Jetson Xavier NX）从 JetPack 4.5
+升级到 JetPack 5.1.6 / L4T r35.6.4 / ROS 2 Humble。完整计划和进展在 GitHub 仓库
+`BenLJM/cyberdog_ros2` 的 `docs/jetpack5-humble-port` 分支。
+
+**先做三件事**：①读该分支 `docs/JETPACK5_HUMBLE_PORT_PLAN.md`（总计划，第 12 节是
+Phase 4）、`docs/PHASE3_BUILD_RESULTS.md`（内核构建结果+遗留项）、`docs/MANIFEST.yaml`
+（分区 UUID）；②读我的项目 memory（`cyberdog-handoff-2026-07-19`、
+`cyberdog-phase3-jp5-kernel`、`cyberdog-phase2-armed-run-0717`）；③ssh 上狗确认连通。
+
+## 已完成
+- **Phase 2**（NVMe 双系统分区手术）✅ tag `v0.1-phase2-dualboot`。
+  p1=50G JP4（当前系统 `/`）、p2=50G JP5_ROOT（空）、p3=19.2G `/data`。
+- **Phase 3**（首个 JP5 内核 L4T r35.6.4 / 5.10.216）✅ tag `v0.2-phase3-jp5-kernel`。
+  zbwu 的 r35.1 移植成果已 rebase 到 r35.6.4；defconfig 补了 CAN_RAW + 音频栈；
+  rt5680/tas5805m 编解码器已转 5.10 组件 API 并编译通过。
+- **2026-07-19 复盘补课**（当天已做完）：full-build.sh 重写、内核用
+  `LOCALVERSION=-tegra` 重编（KREL = `5.10.216-tegra`），产物目录在狗上
+  `/data/jp5-build-2026-07-19-tegra/`（Image、DTB、8821cu.ko、模块 tarball、
+  SHA256SUMS）；内核 delta 补丁序列补齐入库；JP5 initrd 已构建。细节见下面清单；
+  复盘全文已入库：`docs/RETROSPECTIVE-2026-07-19.md`。
+
+## ⚠️ 妥协点/遗漏点清单（2026-07-19 复盘后更新，已解决的留档别再踩）
+1. **LOCALVERSION** ✅ 已解决（2026-07-19）：full-build.sh 已改（强制
+   `LOCALVERSION=-tegra`、`set -euo pipefail`、KREL/vermagic 断言、防旧产物混包），
+   内核已重编为 `5.10.216-tegra`。新产物目录 `/data/jp5-build-2026-07-19-tegra/`；
+   旧的 5.10.216+ 目录已废弃删除，别再用。
+2. **内核源码复现路径**：权威复现记录就是仓库里的 `cyberdog-deltas/` 补丁序列 +
+   `REPRODUCE.md`（三个树全齐：kernel-5.10 ×9、jakku-dts ×3、nvidia ×6——
+   2026-07-19 把 nvidia 从 1 个补齐到 6 个并修好了 REPRODUCE.md）。复现 = 在干净的
+   r35.6.4 源上按 REPRODUCE.md `git am` 补丁序列，**无需重做音频转换**。Mac 上的
+   `build/` 目录只是构建缓存，丢了不心疼。
+3. **音频声卡（推迟到 Phase 5.6，方向已改判）**：tegra-alt 在 5.10 编不过是死路没变，
+   但 Phase 5.6 的目标改为 **`nvidia,tegra186-ape` + `nvidia-audio-card,*` 属性**
+   （r35 官方定制声卡路径，有文档有先例）；audio-graph 降为备选（t194 上出厂
+   `status="disabled"`、文档薄、tegra_codecs.c 对 codec 有硬编码）。rt5680/tas5805m
+   编解码器 .ko 两条路通用，不受影响；绑定仍需真机验证。
+   `tegra194-mi-k91-audio.dtsi` 目前还是带大段说明的 PLACEHOLDER。
+4. **cyberdog_motor_sdk 链接检查没做**（计划 §11 验收项，本轮没编 SDK）。CAN_RAW 等
+   已进 defconfig 但没对真实电机 SDK 验证 → Phase 5 CAN 上电时做。
+5. **Wi-Fi 二选一** ✅ 已解决（2026-07-19）：athena_defconfig delta 0009 已关掉树内
+   RTL8821CU，morrownr 的 `8821cu.ko` 是唯一 Wi-Fi 驱动。staging 时只装它这一份。
+6. **JP5 initramfs** ✅ 已解决（2026-07-19）：`tools/phase4/build-jp5-initrd.sh` 已
+   构建出 JP5 initrd（busybox 壳 + USB gadget console + 自动回退守护 + switch_root），
+   打包后 959,877 B，远低于 cboot 静默换载红线 7,236,790 B（Phase 2 实测：initrd
+   超限时 cboot 不报错、直接换回 stock initrd），构建+上膛双重尺寸门禁。
+   `jp5-autorevert-hook.sh` 也重写了：加了启动尝试计数器（>3 次未成功即回退，由
+   rootfs 里的 `jp5-boot-ok.service` 清零——unit 文件在 `tools/phase4/`），修复了
+   "挂载成功但 panic 循环永不回退"的盲区；revert 失败时 HOLD 在 gadget shell 等人来，
+   不盲目重启。剩余动作 = Phase 4 的空 p2 彩排（见下）。
+7. BMI160 已开但 IMU 绑定路径未验证（活体 4.9 还走 HID-sensor 路）→ Phase 5。
+   PREEMPT_RT 跳过（可选）。摄像头 nv_ov7251.ko / nv_ov13b10.ko 已编出。
+8. **蓝牙路径（新记账，别漏）**：内核走的是 NVIDIA 树的 `rtk_btusb.ko`
+   （CONFIG_RTK_BTUSB=m，主线 btusb/btrtl 没开）。它要的固件是 `/lib/firmware/`
+   下的**裸文件** `rtl8821cu_fw` 和 `rtl8821cu_config`（从狗的 JP4 侧
+   /lib/firmware 拷出），**不是** linux-firmware 的 rtl_bt/rtl8821c_fw.bin。
+   Phase 4 staging 清单必须带上这两个文件。
+
+## 构建环境要点（能省几小时）
+- Mac（Apple 芯片）用 colima+docker 原生编 arm64，镜像 `cyberdog-kbuild`。**必须编到
+  容器原生盘**（`O=/tmp/kb`），**不能编到 /work 挂载目录**——NVIDIA 的树内 `sed -i`
+  代码生成在 virtiofs 上会报 "couldn't open temporary file … Permission denied"。
+  编完把产物拷回。参考 `~/projects/cyberdog/build/full-build.sh`。
+- **狗**：`ssh mi@10.0.0.219`，免密 sudo。**带 GitHub 推送权限的仓库 clone 在狗上**
+  `~/cyberdog_ros2`（这台 Mac 没推送凭据，提交/推送都在狗上做）。
+- **Wi-Fi 怪癖**：内置 USB RTL8821CU 芯片枚举慢（~66 秒），久了会赖床（lsusb 里消失）→
+  拔电源线 10 秒复位（电池已拆、只靠电源线）。路由偶尔把狗踢下线（重启路由）。**插着
+  USB 线开机曾进 RCM/APX 刷机模式——开机时先别插 USB 线**。
+- 需要我做遥控之手时（x86 笔记本 + USB），我会用大白话给单条可复制命令、并请你拍串口照片。
+
+## Phase 4 之前的 JP4 侧一晚：已按机主决定取消（2026-07-19）
+- **走路测试：机主决定不做**（接受后果：此后若发现运动异常，将无法区分是
+  Phase 2 缩盘还是后续改动所致——此账已认）。
+- **MCU 使能序列捕获：顺延到 Phase 5**（JP4 保留在 p1、随时可回去补做，窗口
+  不关；届时先给 `start-capture.sh` 补上 TCA6424 GPIO 读取）。
+- **BT 固件：已完成（2026-07-19 晚，远程）**——从镜像里的小米 4.9 树和 zbwu
+  r35 overlay 两处提取（逐字节一致），存于
+  `/data/jp5-build-2026-07-19-tegra/bt-firmware/`（含 SHA256SUMS），
+  Phase 4 ⑥直接从这里拷，不再依赖 JP4 活体。
+- **SSD 备份点名**：并入 Phase 4 笔记本夜的第②步（p01.img 上次校验 2026-04-25）。
+
+另：**Track S**（cyberdog_locomotion Galactic→Humble 模拟器移植）还没启动。它纯软件、
+不需要狗也不需要 x86 笔记本，是硬件夜之间最好的并行工作，别让它一直躺着。
+
+## Phase 4 已完成：JP5 首启成功（2026-07-20）→ 详见 docs/PHASE4_BOOT_RESULTS.md
+
+🎉 **JP5 真的启动成功了**：到 multi-user + 图形界面、内核 `5.10.216-tegra`、
+主机名 `cyberdog-jp5`、根在 p2、我们编的 8821cu 已加载、jp5-boot-ok 已清计数。
+⑥ 全程在狗上原生完成（假 qemu 跑 apply_binaries，免 x86）；④⑤⑦ 已做。
+**移植最难的"首次启动"关已过。** 狗当前已退回 JP4（DEFAULT primary）正常可用。
+
+✅ **Wi-Fi 已解决(2026-07-20)** —— JP5 干净启动即自动拉起 `wlan0`、连上 AP、
+Wi-Fi 直连可达(蓝牙固件也一并加载)。两个病根:①TCA6424 GPIO 扩展器共用的低有效
+复位线被 zbwu 注释掉了 → 加 gpio-hog 释放(补丁 jakku-dts/0004);②xhci 主机固件
+`xusb.bin` 被内建驱动在 initramfs 阶段就请求、当时找不到 → 塞进 initrd。详见
+`docs/PHASE4_BOOT_RESULTS.md`。调试桥(Mac→笔记本 10.0.0.176→USB→192.168.55.1)
+也记在那里。**剩余外设(相机 RTCPU 固件、电机 CAN、音频)= Phase 5。**
+
+---
+### 历史记录：2026-07-19 晚远程完成第③步（DEFAULT 未动、狗照常跑 JP4）
+`/boot-jp5/` 三件套已按改名清单上膛并逐一 sha256 验证（initrd 961,042 B 过
+门禁）；`LABEL jp5` stanza 已整段重写为权威形态（`root=/dev/nvme0n1p2` +
+`panic=15`）；三份 `*-saved` 已于 19:42 重新生成并验证（jp4-saved 与 live
+逐字节一致、rescue 段带 LINUX 行——07-11 陈旧副本问题就此闭环）。改前备份：
+pivot 上 `extlinux.conf.pre-phase4-20260719`。历史陷阱说明（proof 模式占位、
+陈旧 saved 不可信）已成过去时，存档基准见仓库
+`docs/extlinux-live-2026-07-19.conf` 和 `docs/dtb-live-jp4-2026-07.dts.gz`。
+**笔记本夜剩余步骤：①②④⑤⑥⑦⑧⑨（③已完成）。**
+
+按这个顺序走：①**当晚第一件事**做零风险 Path-B RCM 演练：正常关机→插 USB→上电→
+x86 `lsusb` 找 `0955:7e19`→断电重启回 JP4——这是所有"回退不触发"场景的最终兜底，
+先证明它可用；②接 SSD 做备份点名：重点 sha256 抽查 layer3 的 p01.img（上次校验还
+停在 2026-04-25）；③stage 到 `/boot-jp5/` 是**改名拷贝**，逐条照抄（目标文件名必须
+跟 runbook §2 stanza 三行一字不差）：`Image` → `/boot-jp5/Image`；`jp5-initrd` →
+`/boot-jp5/initrd`（今天唯一真正悬空的名字）；`tegra194-p3668-0001-p2151-0000.dtb`
+→ `/boot-jp5/tegra194-mi-k91.dtb`——**必须覆盖**该路径上 2026-07-11 留下的旧文件
+（那是 JP4 DTB 的字节拷贝、能静默加载：漏拷的话 stanza 就拿旧 JP4 DTB 配新 5.10
+内核启动，零报错）。拷完 `ls /boot-jp5/` 跟 stanza 三行逐一核对；staging 复查 =
+initrd 尺寸 < 7,236,790 B **且** sha256 对得上 `jp5-initrd.sha256`。然后整段重写
+jp5 stanza + 重新生成 `*-saved`（如上）；④先
+boot-switch 到 rescue 启动一次，验证逃生舱还活着，再动 jp5；⑤**【rsync rootfs
+之前】空 p2 彩排**：切 jp5 启动一次，守护发现 p2 无 init 会自动回退到 JP4。彩排
+那次启动的 dmesg 是看不到的（守护几秒内就回退重启了），所以验收看**回退后在 JP4
+侧读的事后证据**：(a) eMMC pivot 上 `/boot/jp5-revert.log` 多了一条新 REVERT 记录、
+且带 initrd 构建戳（`/etc/jp5-initrd.build`）——只有我们自建的 initrd 会写它、
+stock initrd 写不出来，这条记录本身就同时证明"cboot 真从文件载核到了我们的
+initrd"和 initrd 身份；(b) 计数器已归档为 `jp5-boot-attempts.reverted`；(c)
+`DEFAULT` 已翻回 jp4。（dmesg 里 chosen/linux,initrd-* 的尺寸核对挪到⑧真实首启
+做——那时 dmesg 才读得到。）**彩排要是没回来**：(i) x86 笔记本上枚举出 USB gadget
+"CyberDog JP5 initrd"（`0955:7020`）且 ACM shell 有响应 → 是守护回退失败在 HOLD
+等人来，连上去查；(ii) 什么都没枚举、狗也没回 JP4 → 疑似 stock initrd 被静默换载
+或 initrd 坏了且 DEFAULT 卡在 jp5——**别反复断电重试**，直接走①演练过的 RCM
+Path-B 兜底。注意：老写法"把 root= 指错分区彩排"**无效**——钩子直接探测 p2，不读 cmdline；
+⑥x86 上 `apply_binaries.sh` 生成 rootfs → **chroot 里 `systemctl mask
+nv-l4t-bootloader-config.service` + `apt-mark hold nvidia-l4t-bootloader
+nvidia-l4t-initrd nvidia-l4t-xusb-firmware`**（r35 的 bootloader 自动升级机制对这只
+r32.5 cboot/QSPI 的狗是唯一软件变砖向量）**+ 安装 `jp5-boot-ok.service`
+（tools/phase4/——就在这个 chroot 阶段装，别拖到 rsync 之后）** → `rsync` 到 p2 →
+改 fstab（p2 做 `/`、p3 做 `/data`）→ `rm -rf` p2 的 /lib/modules/5.10.216-tegra
+（apply_binaries 装的原厂同名模块）→ 解包自编 modules-5.10.216-tegra.tar.gz →
+拷 morrownr `8821cu.ko` 进 /lib/modules/5.10.216-tegra/extra/（它**不在** tarball
+里、是单独一个文件）→ **然后才** chroot `depmod -a 5.10.216-tegra` → 拷 BT 固件
+（妥协点 8）→ 拷 Wi-Fi 凭据（JP4 侧 / Layer 0 的 wpa/NetworkManager 配置）→
+启用 USB gadget 服务（nv-l4t-usb-device-mode，RNDIS 192.168.55.1 + ttyGS0）作为
+首个访问通道；⑦真实首启：**先重新 boot-switch 到 jp5**（⑤彩排已把 DEFAULT 翻回
+jp4，不重新切的话这一脚重启只会原地回到 JP4），然后一律从 JP4 热重启、USB 线全程
+插着（Phase 2 整夜验证安全）；凡冷上电：先上电、后插线；⑧验收：
+`ssh mi@192.168.55.1` 通、`uname -r` = `5.10.216-tegra`、`lsmod` 有 8821cu、
+`ip a` 有 usb0+wlan0、dmesg 里 chosen/linux,initrd-* 尺寸等于 jp5-initrd 实际尺寸
+（若是 7,236,790 就是 stock 被静默换载——这项从⑤挪来，只有这次启动的 dmesg 读得到）、
+journalctl 里 jp5-boot-ok 已清计数；⑨改所有出厂密码、`pro attach`。
+
+风格：跟我说话用大白话，别堆术语。任何校验不过就停下来问我，别自作主张跳过。

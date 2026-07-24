@@ -1,0 +1,198 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * ############################################################################
+ * PLACEHOLDER — the tegra-alt machine driver this card targets does NOT
+ * compile on kernel 5.10 (2026-07-19 finding). The entire r35.1 tegra-alt
+ * subsystem (utils/tegra_pcm_alt.c et al.) still uses the pre-4.18 ASoC API
+ * removed in 5.10: struct snd_soc_platform, snd_soc_pcm_runtime.{platform,
+ * cpu_dai}, dma_mmap_writecombine — ~20 driver files would each need the same
+ * component-API port the codecs got. zbwu never forward-ported tegra-alt.
+ *
+ * DECISION: Phase 5.6 audio bring-up re-authors this card for the MAINLINE
+ * audio-graph stack (nvidia,tegra186-audio-graph-card), which already builds
+ * clean in this tree (snd-soc-tegra-audio-graph-card.ko). That means graph
+ * ports/endpoints instead of nvidia,dai-link-N, and adding audio-graph OF
+ * endpoints to the rt5680/tas5805m codec nodes + drivers. Route/mic-channel
+ * binding needs the real hardware regardless (dmesg/aplay/amixer loop).
+ *
+ * This DTB compiles (data only) and does NOT affect Phase 4 first-boot; the
+ * card simply won't bind at runtime until Phase 5.6. The codec i2c nodes,
+ * GPIO wiring, and nvidia,audio-routing table below stay valid as the wiring
+ * oracle for the audio-graph rewrite. Kept, not reverted, for that reason.
+ * ############################################################################
+ *
+ * CyberDog (Xiaomi mi-k91 / Jetson Xavier NX) audio wiring for L4T r35.6.4
+ * (kernel 5.10), ported from the JetPack4 / L4T-r32 (kernel 4.9) tegra-alt
+ * "mobile" framework.
+ *
+ * Card: rt5680 6-mic capture codec (dsp_a, 16kHz, 6ch) + tas5805m mono I2S
+ *       playback amplifier, bound by the generic r35 tegra-alt machine driver
+ *       "nvidia,tegra-audio-t186ref" (kernel/nvidia/.../tegra_t186ref_alt.c).
+ *
+ * Oracles used:
+ *   - Live CyberDog DT dump  (authoritative HW wiring)
+ *   - 4.9 Xiaomi mi-k91-audio.dtsi (original tegra-alt "mobile" fragment)
+ *
+ * Property reconciliation 4.9 "mobile" driver -> r35 generic t186ref driver
+ * (tegra_machine_new_codec_links() in utils/tegra_asoc_machine_alt.c):
+ *   - The generic driver iterates children "nvidia,dai-link-<N>" for
+ *     N = 1..nvidia,num-codec-link CONTIGUOUSLY. The 4.9 fragment used the
+ *     sparse numbers dai-link-3 (rt5680) and dai-link-5 (tas5805); here they
+ *     are renumbered to dai-link-1 / dai-link-2 with nvidia,num-codec-link=2.
+ *   - The generic driver REQUIRES on every link: codec-dai, cpu-dai,
+ *     cpu-dai-name, codec-dai-name, name-prefix, link-name, bit-format,
+ *     srate, num-channel (missing any -> probe fails). The 4.9 rt5680 link
+ *     had no cpu-dai / cpu-dai-name / bit-format; the 4.9 tas5805 link had no
+ *     name-prefix. All are added below, taken from the live DT.
+ *   - nvidia,xbar (phandle to the AHUB/axbar) is required at card level.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+
+/*
+ * Enable the tegra-alt AHUB, ADMAIF and the two I2S controllers this card
+ * uses. They are declared status="disabled" in the SoC file
+ * (hardware/nvidia/soc/t19x/kernel-dts/tegra194-soc/tegra194-soc-audio.dtsi);
+ * we flip them to okay, mirroring how the stock devkit audio dtsi brings up
+ * the APE block.
+ *
+ * Per the live DT the rt5680 6-mic codec sits on I2S3 (the 4.9 fragment
+ * omitted its cpu-dai entirely) and the tas5805m amp sits on I2S5.
+ */
+&tegra_axbar {
+	status = "okay";
+};
+
+&tegra_admaif {
+	status = "okay";
+};
+
+&tegra_i2s3 {
+	status = "okay";
+};
+
+&tegra_i2s5 {
+	status = "okay";
+};
+
+/*
+ * Replace the stock devkit APE card (compatible "nvidia,tegra186-ape", bound
+ * by tegra_machine_driver.c) with the CyberDog tegra-alt t186ref card. This
+ * mirrors the 4.9 approach of overriding &tegra_sound, and cleanly prevents
+ * two machine drivers from binding the same AHUB/I2S nodes. The stock clocks
+ * (pll_a / pll_a_out0 / extern1) are exactly what the t186ref driver expects,
+ * so they are inherited unchanged.
+ */
+&tegra_sound {
+	status = "okay";
+	compatible = "nvidia,tegra-audio-t186ref";
+	nvidia,model = "cyberdog-mi-k91-ape";
+	nvidia,num-codec-link = <2>;
+	nvidia,xbar = <&tegra_axbar>;
+
+	/*
+	 * Audio routing preserved verbatim from the live CyberDog DT dump.
+	 * The generic t186ref driver parses this as opaque widget-name pairs
+	 * and only validates them against registered DAPM widgets at card
+	 * registration (runtime), so it does not affect DTB compilation.
+	 * PHASE-5 (HW bring-up): route/widget names (codec name-prefixes, mic
+	 * channel order) will need tuning against the actual rt5680/tas5805m
+	 * widget names exposed by the converted r35 codec drivers.
+	 */
+	nvidia,audio-routing =
+		"x Headphone",		"x OUT",
+		"x IN",			"x Mic",
+		"y Headphone",		"y OUT",
+		"y IN",			"y Mic",
+		"z Headphone",		"z OUT",
+		"z IN",			"z Mic",
+		"m Headphone",		"m OUT",
+		"m IN",			"m Mic",
+		"n Headphone",		"n OUT",
+		"n IN",			"n Mic",
+		"o Headphone",		"o OUT",
+		"o IN",			"o Mic",
+		"a IN",			"a Mic",
+		"b IN",			"b Mic",
+		"c IN",			"c Mic",
+		"d IN",			"d Mic",
+		"d1 Headphone",		"d1 OUT",
+		"d2 Headphone",		"d2 OUT",
+		"h1 DMIC L1",		"h1 Int DMIC",
+		"h1 DMIC R1",		"h1 Int DMIC",
+		"h1 DMIC L2",		"h1 Int DMIC",
+		"h1 DMIC R2",		"h1 Int DMIC",
+		"h1 DMIC L3",		"h1 Int DMIC",
+		"h1 DMIC R3",		"h1 Int DMIC",
+		"h1 DMIC L4",		"h1 Int DMIC",
+		"h1 DMIC R4",		"h1 Int DMIC";
+
+	/*
+	 * dai-link-1: rt5680 6-mic capture (was dai-link-3 in the 4.9 fragment).
+	 * cpu-dai / cpu-dai-name / bit-format added for the generic r35 driver;
+	 * cpu side = I2S3 per the live DT.
+	 */
+	nvidia,dai-link-1 {
+		link-name = "rt5680-codec";
+		cpu-dai = <&tegra_i2s3>;
+		codec-dai = <&rt5680>;
+		cpu-dai-name = "I2S3";
+		codec-dai-name = "rt5680-aif1";
+		format = "dsp_a";
+		bit-format = "s16_le";
+		srate = <16000>;
+		num-channel = <6>;
+		fsync-width = <15>;
+		name-prefix = "h1";
+		ignore_suspend;
+		status = "okay";
+	};
+
+	/*
+	 * dai-link-2: tas5805m mono amplifier (was dai-link-5 in the 4.9
+	 * fragment). name-prefix added for the generic r35 driver; value "x"
+	 * per the live DT.
+	 */
+	nvidia,dai-link-2 {
+		link-name = "tas5805-codec";
+		cpu-dai = <&tegra_i2s5>;
+		codec-dai = <&tas5805m>;
+		cpu-dai-name = "I2S5";
+		codec-dai-name = "tas5805m-amplifier";
+		format = "i2s";
+		bit-format = "s16_le";
+		srate = <16000>;
+		num-channel = <1>;
+		name-prefix = "x";
+		ignore_suspend;
+		status = "okay";
+	};
+};
+
+/*
+ * Codec I2C nodes on gen1_i2c (i2c@3160000) - same bus as the live DT.
+ * The GPIO-expander phandles/pins reconcile exactly with zbwu's r35 board
+ * dtsi (common/tegra194-p2151-0000.dtsi) gpio-line-names:
+ *   gpio_expand1 (tca6424@23) pin 7  = "SND_PA_PDN"       (TAS5805 power-down)
+ *   gpio_expand2 (tca6424@22) pin 18 = "SND_PA_1V8_EN"    (TAS5805 1V8 enable)
+ *   gpio_expand2 (tca6424@22) pin 19 = "SND_CODEC_1V8_EN" (RT5680 1V8 enable)
+ * These match both the live DT (<0x25 7>, <0x26 18>, <0x26 19>) and the 4.9
+ * Xiaomi dtsi, so no GPIO TODO is required.
+ */
+&gen1_i2c {
+	tas5805m: tas5805m@2c {
+		compatible = "ti,tas5805m";
+		reg = <0x2c>;
+		pdn-enable-gpio = <&gpio_expand1 7 GPIO_ACTIVE_HIGH>;
+		pa-1v8-enable-gpio = <&gpio_expand2 18 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	rt5680: rt5680@2d {
+		compatible = "realtek,rt5680";
+		reg = <0x2d>;
+		codec-pa-1v8-enable-gpio = <&gpio_expand2 18 GPIO_ACTIVE_HIGH>;
+		codec-1v8-enable-gpio = <&gpio_expand2 19 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+};

@@ -1,0 +1,29 @@
+Subject: [PATCH] nvmap: R32 handle-as-fd compat for JP4 camera userspace on R35
+
+Enable NVIDIA's NVMAP_CONFIG_HANDLE_AS_FD so NVMAP_IOC_CREATE returns a
+dmabuf fd in op.handle (R32 semantics) instead of an opaque xarray id.
+The factory R32 camera userspace mmap()s op.handle directly; with the R35
+default (HANDLE_AS_ID) that value is an id (>= U32_MAX/2) -> mmap EBADF.
+Affects userspace /dev/nvmap clients only; kernel clients never set ->ida.
+---
+--- a/drivers/video/tegra/nvmap/Makefile.memory.configs	2026-07-25 00:54:23
++++ b/drivers/video/tegra/nvmap/Makefile.memory.configs	2026-07-25 00:54:36
+@@ -114,7 +114,17 @@
+ # This is fallback option to support handle as FD
+ # To support handle as ID, set this to n
+ # This config is useful to debug issue if its due to handle as ID or FD
+-NVMAP_CONFIG_HANDLE_AS_FD := n
++#
++# CyberDog JP5: set to 'y' to run the factory JP4/R32 closed camera userspace
++# (nvargus/libargus) on this R35 kernel. R32 nvmap ABI is "handle == dmabuf fd":
++# NVMAP_IOC_CREATE returns the fd in op.handle and userspace mmap()s it directly
++# (no NVMAP_IOC_GET_FD). The R35 default (HANDLE_AS_ID) returns an opaque xarray
++# id (>= U32_MAX/2) that userspace then mmap()s as an fd -> EBADF. HANDLE_AS_FD=y
++# selects NVIDIA's own handle-as-fd path (priv->ida=NULL), restoring R32 semantics
++# for userspace /dev/nvmap clients ONLY. Kernel clients (nvgpu/host1x/VI) create
++# their nvmap_client via __nvmap_create_client (kernel_client=1) which never sets
++# ->ida, so they are unaffected by this flag. See build/nvmap-handle-fd/NOTES.md.
++NVMAP_CONFIG_HANDLE_AS_FD := y
+ 
+ # Config for kstable/OOT kernel
+ # This is useful when any kstable/OOT specific checks are needed

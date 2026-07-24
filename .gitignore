@@ -1,0 +1,28 @@
+# ---- 第三方大树(可从官方 tarball / 上游仓库重建,不入库) ----
+# build/mirror  = 小米 R32 内核源码镜像 4.7G
+# build/src     = NVIDIA R35.6.4 源码树 1.7G(改动文件已快照到 kernel-tree-mods/)
+# build/out     = 构建中间产物 1.4G
+# build/wifi    = rtl8821cu 上游驱动树 183M
+build/mirror/
+build/src/
+build/out/
+build/wifi/
+cyberdog_ros2/
+*.tbz2
+*.tar.gz
+*.tar.bz2
+
+# ---- 构建产物(可重建,体积大) ----
+**/out/
+*.ko.unstripped
+build/recovered-from-dog/unpack-jp5/
+build/recovered-from-dog/unpack-rescue/
+
+# ---- 大二进制:出厂 QSPI 全片备份(32M,不可再生但不适合入库) ----
+# 保留在工作树,单独异地备份
+build/qspi-backup-factory.bin
+build/firmware/
+
+# ---- 杂项 ----
+.DS_Store
+*.log

@@ -1,0 +1,164 @@
+From 235556fdf420e83d1a178af2845c2e63cddfed51 Mon Sep 17 00:00:00 2001
+From: Zhibin Wu <zbwu86@gmail.com>
+Date: Fri, 3 Jun 2022 20:58:44 +0800
+Subject: [PATCH 4/5] ov7251 fix i2c address conflict
+
+---
+ drivers/media/i2c/nv_ov13b10.c       |  4 +-
+ drivers/media/i2c/nv_ov7251.c        | 95 +++++++++++++++++++++++++++-
+ drivers/media/i2c/ov7251_mode_tbls.h |  2 +-
+ 3 files changed, 96 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/i2c/nv_ov13b10.c b/drivers/media/i2c/nv_ov13b10.c
+index 141ea7436..e2e7e4ce9 100644
+--- a/drivers/media/i2c/nv_ov13b10.c
++++ b/drivers/media/i2c/nv_ov13b10.c
+@@ -717,9 +717,9 @@ static int ov13b10_debugfs_create(struct ov13b10 *priv)
+ 	int err = 0;
+ 	struct i2c_client *client = priv->i2c_client;
+ 	const char *devnode;
+-	char debugfs_dir[16];
++	char debugfs_dir[20];
+ 
+-	err = of_property_read_string(client->dev.of_node, "devnode", &devnode);
++	err = of_property_read_string(client->dev.of_node, "name", &devnode);
+ 	if (err) {
+ 		dev_err(&client->dev, "devnode not in DT\n");
+ 		return err;
+diff --git a/drivers/media/i2c/nv_ov7251.c b/drivers/media/i2c/nv_ov7251.c
+index b1a5447aa..e9136bdf3 100644
+--- a/drivers/media/i2c/nv_ov7251.c
++++ b/drivers/media/i2c/nv_ov7251.c
+@@ -160,6 +160,91 @@ static void ov7251_gpio_set(struct camera_common_data *s_data,
+ 	}
+ }
+ 
++static int ov7251_update_sccb_id(struct camera_common_data *s_data)
++{
++	struct ov7251 *priv = (struct ov7251 *)s_data->priv;
++	uint8_t chip_id_high, chip_id_low, sccb_id;
++	struct device *dev = s_data->dev;
++	struct i2c_board_info brd;
++	struct i2c_adapter *adap;
++	struct i2c_client *client;
++	struct regmap *regmap;
++	uint32_t addr;
++	int err = 0;
++
++	static struct regmap_config config = {
++		.reg_bits = 16,
++		.val_bits = 8,
++	};
++
++	if (priv->i2c_client->addr == 0x60)
++		return 0;
++
++	err = camera_common_mclk_enable(s_data);
++	if (err) {
++		dev_err(dev,
++			"Error %d turning on mclk\n", err);
++		return err;
++	}
++
++	memset(&brd, 0, sizeof(brd));
++	snprintf(brd.type, I2C_NAME_SIZE, "ov7251_default");
++	brd.addr = 0x60; // ov7251 default address
++
++	adap = i2c_get_adapter(priv->i2c_client->adapter->nr);
++	if (!adap) {
++		dev_err(dev, "%s: Unable to get I2C adapter %d for device %s\n",
++			__func__, priv->i2c_client->adapter->nr, brd.type);
++		err = -EPROBE_DEFER;
++		goto error;
++	}
++
++	client = i2c_new_client_device(adap, &brd);
++	if (IS_ERR(client)) {
++		dev_err(dev, "%s: creating I2C device failed\n", __func__);
++		i2c_put_adapter(adap);
++		err = PTR_ERR(client);
++		goto error;
++	}
++
++	regmap = devm_regmap_init_i2c(client, &config);
++	if (IS_ERR(regmap)) {
++		dev_err(dev, "%s: creating I2C regmap failed\n", __func__);
++		i2c_unregister_device(client);
++		err = PTR_ERR(regmap);
++		goto error;
++	}
++
++	addr = priv->i2c_client->addr;
++	addr = addr << 1;
++	// write new i2c address
++	regmap_write(regmap, 0x0109, addr);
++	// enable sccb_pgm_id_en
++	regmap_write(regmap, 0x303B, BIT(1));
++
++	i2c_unregister_device(client);
++	i2c_put_adapter(adap);
++
++	// check chip id and sccb id
++	ov7251_read_reg(s_data, 0x300A, &chip_id_high);
++	ov7251_read_reg(s_data, 0x300B, &chip_id_low);
++	ov7251_read_reg(s_data, 0x0109, &sccb_id);
++	dev_info(dev, "chip id: %X%X sccb id: %X addr: %X\n",
++			chip_id_high, chip_id_low, sccb_id, sccb_id >> 1);
++
++	camera_common_mclk_disable(s_data);
++
++	if (sccb_id != addr)
++		return -EFAULT;
++
++	return 0;
++
++error:
++	camera_common_mclk_disable(s_data);
++
++	return err;
++}
++
+ static int ov7251_power_on(struct camera_common_data *s_data)
+ {
+ 	int err = 0;
+@@ -195,6 +280,12 @@ static int ov7251_power_on(struct camera_common_data *s_data)
+ 
+ 	usleep_range(2000, 2010);
+ 
++	err = ov7251_update_sccb_id(s_data);
++	if (err) {
++		dev_err(dev, "%s: update sccb_id failed\n", __func__);
++		goto ov7251_iovdd_fail;
++	}
++
+ 	pw->state = SWITCH_ON;
+ 
+ 	return 0;
+@@ -722,9 +813,9 @@ static int ov7251_debugfs_create(struct ov7251 *priv)
+ 	int err = 0;
+ 	struct i2c_client *client = priv->i2c_client;
+ 	const char *devnode;
+-	char debugfs_dir[16];
++	char debugfs_dir[20];
+ 
+-	err = of_property_read_string(client->dev.of_node, "devnode", &devnode);
++	err = of_property_read_string(client->dev.of_node, "name", &devnode);
+ 	if (err) {
+ 		dev_err(&client->dev, "devnode not in DT\n");
+ 		return err;
+diff --git a/drivers/media/i2c/ov7251_mode_tbls.h b/drivers/media/i2c/ov7251_mode_tbls.h
+index c3e6044f7..238758737 100644
+--- a/drivers/media/i2c/ov7251_mode_tbls.h
++++ b/drivers/media/i2c/ov7251_mode_tbls.h
+@@ -49,7 +49,7 @@ static const ov7251_reg tp_colorbars[] = {
+ 
+ static const ov7251_reg mode_640x480[] = {
+ 	{OV7251_TABLE_WAIT_MS, OV7251_WAIT_MS},
+-	{0x0103,0x01},
++	// {0x0103,0x01}, // software reset
+ 	{0x0100,0x00},
+ 	{0x3005,0x00},
+ 	{0x3012,0xc3},
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,41 @@
+From ae0da920134cec2379bb0a000af2b1af1484e3b5 Mon Sep 17 00:00:00 2001
+From: Ben <luckyljmever@gmail.com>
+Date: Fri, 24 Jul 2026 10:22:45 +0800
+Subject: [PATCH] p2151 DT: enable bcm4775 GPS node for ported bcm_gps_tty
+ driver
+
+The node (compatible, vdd/vddgps supplies, nstandby on gpio_expand2
+pin 10) has been present since the initial Athena port but disabled
+because 5.10 had no driver. gps-port/ now provides bcm_gps_tty.ko
+(ported from Xiaomi 4.9 drivers/gps/); flip status to okay so the
+platform device probes, powers vdd-1v8-gps + vdd-3v3-gps and exposes
+/sys/devices/bcm4775/nstandby exactly as on JP4.
+---
+ kernel-dts/common/tegra194-p2151-0000.dtsi | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/kernel-dts/common/tegra194-p2151-0000.dtsi b/kernel-dts/common/tegra194-p2151-0000.dtsi
+index 395e908..bfcc957 100644
+--- a/kernel-dts/common/tegra194-p2151-0000.dtsi
++++ b/kernel-dts/common/tegra194-p2151-0000.dtsi
+@@ -418,7 +418,16 @@
+ 		vdd-supply = <&vdd_1v8_gps>;
+ 		vddgps-supply = <&vdd_3v3_gps>;
+ 		nstandby-gpio = <&gpio_expand2 10 GPIO_ACTIVE_LOW>;
+-		status = "disabled";
++		/*
++		 * 2026-07-24 GPS port: enabled for the out-of-tree
++		 * bcm_gps_tty.ko (gps-port/). Node parameters match the JP4
++		 * live DT (audio-port/dtb-live.dts) 1:1; only the two
++		 * fixed-regulator GPIO polarities differ from Xiaomi 4.9
++		 * sources — 4.9 said ACTIVE_LOW but paired it with
++		 * enable-active-high (raw-high wins); our ACTIVE_HIGH is the
++		 * same electrical behavior, spelled honestly.
++		 */
++		status = "okay";
+ 	};
+ 
+ 	leds {
+-- 
+2.50.1 (Apple Git-155)
+

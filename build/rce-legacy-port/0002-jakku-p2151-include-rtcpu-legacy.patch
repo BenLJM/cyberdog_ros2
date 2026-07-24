@@ -1,0 +1,11 @@
+--- a/platform/t19x/jakku/kernel-dts/tegra194-p3668-0001-p2151-0000.dts
++++ b/platform/t19x/jakku/kernel-dts/tegra194-p3668-0001-p2151-0000.dts
+@@ -27,3 +27,8 @@
+ 
+ /* CyberDog mi-k91 audio card (rt5680 6-mic + tas5805m amp, tegra-alt t186ref) */
+ #include "tegra194-mi-k91-audio.dtsi"
++
++/* RCE camera RTCPU: force legacy shared-mailbox (SM5) HSP so the R35 kernel can
++ * talk to the factory R32-era RCE firmware in QSPI. Pairs with the command-layer
++ * driver patch. MUST be after tegra194-camera.dtsi (SoC) is included. */
++#include "tegra194-mi-k91-rtcpu-legacy.dtsi"

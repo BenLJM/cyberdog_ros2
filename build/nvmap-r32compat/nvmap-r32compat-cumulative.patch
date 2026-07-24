@@ -1,0 +1,303 @@
+diff -ruN a/drivers/video/tegra/nvmap/nvmap_dev.c b/drivers/video/tegra/nvmap/nvmap_dev.c
+--- a/drivers/video/tegra/nvmap/nvmap_dev.c	2026-07-24 23:37:48
++++ b/drivers/video/tegra/nvmap/nvmap_dev.c	2026-07-24 23:37:48
+@@ -436,6 +436,14 @@
+ 			sizeof(struct nvmap_rw_handle));
+ 		break;
+ 
++	/* R32 (JP4) ABI compat: 64-bit factory nvargus/libargus emit the R32
++	 * WRITE/READ numbers (32-byte struct). Not under CONFIG_COMPAT. */
++	case NVMAP_IOC_WRITE_R32:
++	case NVMAP_IOC_READ_R32:
++		err = nvmap_ioctl_rw_handle(filp, cmd == NVMAP_IOC_READ_R32,
++			uarg, sizeof(struct nvmap_rw_handle_r32));
++		break;
++
+ #ifdef CONFIG_COMPAT
+ 	case NVMAP_IOC_CACHE_32:
+ 		err = nvmap_ioctl_cache_maint(filp, uarg,
+@@ -480,9 +488,17 @@
+ 		break;
+ 
+ 	case NVMAP_IOC_PARAMETERS:
+-		err = nvmap_ioctl_get_handle_parameters(filp, uarg);
++		err = nvmap_ioctl_get_handle_parameters(filp, uarg,
++			sizeof(struct nvmap_handle_parameters));
+ 		break;
+ 
++	/* R32 (JP4) ABI compat: 56-byte parameters struct (no trailing
++	 * offset field). Not under CONFIG_COMPAT. */
++	case NVMAP_IOC_PARAMETERS_R32:
++		err = nvmap_ioctl_get_handle_parameters(filp, uarg,
++			sizeof(struct nvmap_handle_parameters_r32));
++		break;
++
+ 	case NVMAP_IOC_GET_SCIIPCID:
+ 		err = nvmap_ioctl_get_sci_ipc_id(filp, uarg);
+ 		break;
+@@ -493,6 +509,32 @@
+ 
+ 	case NVMAP_IOC_QUERY_HEAP_PARAMS:
+ 		err = nvmap_ioctl_query_heap_params(filp, uarg);
++		break;
++
++	/*
++	 * R32 (JP4) ABI compat: NVMAP_IOC_MMAP / PIN_MULT / UNPIN_MULT.
++	 * Removed in R35. These reproduce the exact R32 ioctl numbers so the
++	 * factory aarch64 nvargus/libargus gets a *named* deprecation instead
++	 * of the generic "Unknown NVMAP_IOC". The observable result is
++	 * -ENOTTY, BYTE-IDENTICAL to the shipped R32 CyberDog kernel (where
++	 * these were already deprecated stubs): the camera ran on JP4 with
++	 * these returning -ENOTTY, so it does not depend on them succeeding.
++	 * A real bridge is deliberately NOT implemented (see NOTES.md):
++	 *   - map: the supported R35 path is mmap() on the NVMAP_IOC_GET_FD
++	 *     dma-buf (nvmap_dmabuf_mmap -> __nvmap_map). __nvmap_map BUG_ON()s
++	 *     a non-fresh vma, so it cannot back a caller's pre-existing VMA.
++	 *   - pin: R35 has no static IOVA (per-device dma_buf attach); a single
++	 *     returned address is undefined across IOMMU domains — precisely
++	 *     why NVIDIA deprecated pin.
++	 * err stays -ENOTTY. NOT CONFIG_COMPAT (64-bit caller -> native path).
++	 */
++	case NVMAP_IOC_MMAP_R32:
++		pr_warn_once("nvmap: NVMAP_IOC_MMAP removed in R35 (R32 compat stub). Use mmap() on the dma-buf fd from NVMAP_IOC_GET_FD.\n");
++		break;
++
++	case NVMAP_IOC_PIN_MULT_R32:
++	case NVMAP_IOC_UNPIN_MULT_R32:
++		pr_warn_once("nvmap: NVMAP_IOC_[UN]PIN_MULT removed in R35 (R32 compat stub). User space must not pin nvmap handles (multiple IOVA spaces).\n");
+ 		break;
+ 
+ 	default:
+diff -ruN a/drivers/video/tegra/nvmap/nvmap_ioctl.c b/drivers/video/tegra/nvmap/nvmap_ioctl.c
+--- a/drivers/video/tegra/nvmap/nvmap_ioctl.c	2026-07-24 23:37:48
++++ b/drivers/video/tegra/nvmap/nvmap_ioctl.c	2026-07-24 23:37:48
+@@ -461,6 +461,9 @@
+ 	struct nvmap_client *client = filp->private_data;
+ 	struct nvmap_rw_handle __user *uarg = arg;
+ 	struct nvmap_rw_handle op;
++	/* R32 (JP4) ABI compat, always compiled (64-bit caller, not compat). */
++	struct nvmap_rw_handle_r32 __user *uarg_r32 = arg;
++	struct nvmap_rw_handle_r32 op_r32;
+ #ifdef CONFIG_COMPAT
+ 	struct nvmap_rw_handle_32 __user *uarg32 = arg;
+ 	struct nvmap_rw_handle_32 op32;
+@@ -472,6 +475,17 @@
+ 	unsigned long count;
+ 	int handle;
+ 
++	if (op_size == sizeof(op_r32)) {
++		if (copy_from_user(&op_r32, arg, sizeof(op_r32)))
++			return -EFAULT;
++		addr = op_r32.addr;
++		handle = op_r32.handle;
++		offset = op_r32.offset;
++		elem_size = op_r32.elem_size;
++		hmem_stride = op_r32.hmem_stride;
++		user_stride = op_r32.user_stride;
++		count = op_r32.count;
++	} else
+ #ifdef CONFIG_COMPAT
+ 	if (op_size == sizeof(op32)) {
+ 		if (copy_from_user(&op32, arg, sizeof(op32)))
+@@ -539,6 +553,9 @@
+ 	} else if (copied < (count * elem_size))
+ 		err = -EINTR;
+ 
++	if (op_size == sizeof(op_r32))
++		__put_user(copied, &uarg_r32->count);
++	else
+ #ifdef CONFIG_COMPAT
+ 	if (op_size == sizeof(op32))
+ 		__put_user(copied, &uarg32->count);
+@@ -1117,14 +1134,24 @@
+ 
+ }
+ 
+-int nvmap_ioctl_get_handle_parameters(struct file *filp, void __user *arg)
++int nvmap_ioctl_get_handle_parameters(struct file *filp, void __user *arg,
++				      size_t op_size)
+ {
+ 	struct nvmap_client *client = filp->private_data;
+ 	struct nvmap_handle_parameters op;
+ 	struct nvmap_handle *handle;
+ 	bool is_ro = false;
+ 
+-	if (copy_from_user(&op, arg, sizeof(op)))
++	/*
++	 * op_size selects the ABI: R35 native (64B, with trailing offset) or
++	 * R32 (JP4) compat (56B, no offset). The first 56 bytes are byte-
++	 * identical, so a size-bounded copy is correct for both and, crucially,
++	 * never over-writes past the end of a 56-byte R32 user buffer.
++	 */
++	if (op_size > sizeof(op))
++		return -EINVAL;
++
++	if (copy_from_user(&op, arg, op_size))
+ 		return -EFAULT;
+ 
+ 	handle = nvmap_handle_get_from_id(client, op.handle);
+@@ -1160,7 +1187,7 @@
+ 
+ 	nvmap_handle_put(handle);
+ 
+-	if (copy_to_user(arg, &op, sizeof(op)))
++	if (copy_to_user(arg, &op, op_size))
+ 		return -EFAULT;
+ 	return 0;
+ 
+diff -ruN a/drivers/video/tegra/nvmap/nvmap_ioctl.h b/drivers/video/tegra/nvmap/nvmap_ioctl.h
+--- a/drivers/video/tegra/nvmap/nvmap_ioctl.h	2026-07-24 23:37:48
++++ b/drivers/video/tegra/nvmap/nvmap_ioctl.h	2026-07-24 23:37:48
+@@ -66,7 +66,8 @@
+ void kasan_memcpy_toio(void __iomem *to, const void *from,
+ 			size_t count);
+ 
+-int nvmap_ioctl_get_handle_parameters(struct file *filp, void __user *arg);
++int nvmap_ioctl_get_handle_parameters(struct file *filp, void __user *arg,
++				      size_t op_size);
+ 
+ int nvmap_ioctl_get_sci_ipc_id(struct file *filp, void __user *arg);
+ 
+diff -ruN a/include/uapi/linux/nvmap.h b/include/uapi/linux/nvmap.h
+--- a/include/uapi/linux/nvmap.h	2026-07-24 23:37:48
++++ b/include/uapi/linux/nvmap.h	2026-07-24 23:37:48
+@@ -126,6 +126,60 @@
+ };
+ 
+ #ifdef __KERNEL__
++/*
++ * R32 (JetPack4) ABI compat.  The factory nvargus-daemon/libargus in the JP4
++ * chroot is a 64-bit (aarch64) binary compiled against R32 headers, where
++ * struct nvmap_rw_handle is 32 bytes: an 8-byte 'unsigned long addr' followed
++ * by six __u32 fields.  R35 widened the trailing fields to __u64 (56 bytes),
++ * so _IOW() encodes a different size and the R32 WRITE/READ ioctl numbers no
++ * longer match the R35 ones -> the driver returns -ENOTTY.  This re-creates the
++ * exact R32 layout so the R35 driver accepts the legacy ioctls.  It is guarded
++ * by __KERNEL__ only (NOT CONFIG_COMPAT): the caller is a 64-bit task, so it
++ * reaches the native unlocked_ioctl path, not compat_ioctl.
++ */
++struct nvmap_rw_handle_r32 {
++	__u64 addr;		/* user pointer (R32 'unsigned long', 8B aarch64) */
++	__u32 handle;		/* nvmap handle */
++	__u32 offset;		/* offset into hmem */
++	__u32 elem_size;	/* individual atom size */
++	__u32 hmem_stride;	/* delta in bytes between atoms in hmem */
++	__u32 user_stride;	/* delta in bytes between atoms in user */
++	__u32 count;		/* number of atoms to copy */
++};
++#endif /* __KERNEL__ */
++
++#ifdef __KERNEL__
++/*
++ * R32 (JetPack4) ABI compat for the removed MMAP / PIN_MULT / UNPIN_MULT ioctls.
++ * R35 deleted these three ioctls outright (both the structs and the numbers).
++ * The factory aarch64 nvargus/libargus (built against R32 headers) may still
++ * probe them.  These replicas reproduce the *exact* R32 struct sizes so the
++ * re-added ioctl numbers equal the ones the userspace emits
++ * (MMAP=0xc0184e05, PIN_MULT=0xc0184e0a, UNPIN_MULT=0x40184e0b — verified).
++ *
++ * IMPORTANT: unlike WRITE/READ (which are fully functional and whose only R32
++ * delta was struct size), MMAP/PIN were ALREADY deprecated no-ops on the
++ * shipped R32 CyberDog kernel (returned -ENOTTY), and cannot be safely bridged
++ * on R35 (see NOTES.md).  The re-added dispatch cases therefore reproduce the
++ * exact R32 behaviour (-ENOTTY) — they are a named-deprecation compat surface,
++ * NOT a functional map/pin.  __KERNEL__ only (64-bit caller -> native path).
++ */
++struct nvmap_map_caller_r32 {
++	__u32 handle;		/* nvmap handle */
++	__u32 offset;		/* offset into hmem; page-aligned */
++	__u32 length;		/* number of bytes to map */
++	__u32 flags;		/* maps as wb/iwb etc. */
++	__u64 addr;		/* R32 'unsigned long', 8B on aarch64 */
++};
++
++struct nvmap_pin_handle_r32 {
++	__u64 handles;		/* R32 '__u32 *handles' — 8B pointer on aarch64 */
++	__u64 addr;		/* R32 'unsigned long *addr' — 8B pointer */
++	__u32 count;		/* number of entries in handles */
++};
++#endif /* __KERNEL__ */
++
++#ifdef __KERNEL__
+ #ifdef CONFIG_COMPAT
+ struct nvmap_rw_handle_32 {
+ 	__u32 addr;		/* user pointer */
+@@ -238,6 +292,27 @@
+     __u64 offset;
+ };
+ 
++#ifdef __KERNEL__
++/*
++ * R32 (JetPack4) ABI compat for GET_HANDLE_PARAMETERS.  R35 appended a trailing
++ * __u64 offset, growing the struct 56 -> 64 bytes; the first 56 bytes are
++ * byte-identical to R32.  The R32 userspace passes a 56-byte buffer, so the
++ * _IOR() size (and hence the ioctl number) differs.  __KERNEL__ only, not
++ * CONFIG_COMPAT (64-bit caller, native ioctl path).
++ */
++struct nvmap_handle_parameters_r32 {
++    __u8 contig;
++    __u32 import_id;
++    __u32 handle;
++    __u32 heap_number;
++    __u32 access_flags;
++    __u64 heap;
++    __u64 align;
++    __u64 coherency;
++    __u64 size;
++};
++#endif /* __KERNEL__ */
++
+ /**
+  * Struct used while querying heap parameters
+  */
+@@ -276,6 +351,13 @@
+  */
+ #define NVMAP_IOC_FREE       _IO(NVMAP_IOC_MAGIC, 4)
+ 
++#ifdef __KERNEL__
++/* R32 (JP4) compat: legacy NVMAP_IOC_MMAP (nr 5), removed in R35. Re-added as a
++ * named -ENOTTY deprecation only (no functional map — see NOTES.md). */
++#define NVMAP_IOC_MMAP_R32 \
++	_IOWR(NVMAP_IOC_MAGIC, 5, struct nvmap_map_caller_r32)
++#endif /* __KERNEL__ */
++
+ /* Reads/writes data (possibly strided) from a user-provided buffer into the
+  * hmem at the specified offset */
+ #define NVMAP_IOC_WRITE      _IOW(NVMAP_IOC_MAGIC, 6, struct nvmap_rw_handle)
+@@ -285,6 +367,10 @@
+ #define NVMAP_IOC_WRITE_32   _IOW(NVMAP_IOC_MAGIC, 6, struct nvmap_rw_handle_32)
+ #define NVMAP_IOC_READ_32    _IOW(NVMAP_IOC_MAGIC, 7, struct nvmap_rw_handle_32)
+ #endif /* CONFIG_COMPAT */
++/* R32 (JP4) native WRITE/READ: _IOW('N', 6/7, 32-byte struct). Matches the
++ * ioctl numbers the factory aarch64 nvargus/libargus emit. */
++#define NVMAP_IOC_WRITE_R32  _IOW(NVMAP_IOC_MAGIC, 6, struct nvmap_rw_handle_r32)
++#define NVMAP_IOC_READ_R32   _IOW(NVMAP_IOC_MAGIC, 7, struct nvmap_rw_handle_r32)
+ #endif /* __KERNEL__ */
+ 
+ #define NVMAP_IOC_PARAM _IOWR(NVMAP_IOC_MAGIC, 8, struct nvmap_handle_param)
+@@ -292,6 +378,13 @@
+ #ifdef CONFIG_COMPAT
+ #define NVMAP_IOC_PARAM_32 _IOWR(NVMAP_IOC_MAGIC, 8, struct nvmap_handle_param_32)
+ #endif /* CONFIG_COMPAT */
++/* R32 (JP4) compat: legacy PIN_MULT (nr 10) / UNPIN_MULT (nr 11), removed in
++ * R35. Re-added as a named -ENOTTY deprecation only (no functional pin — R35
++ * has no static IOVA, see NOTES.md). */
++#define NVMAP_IOC_PIN_MULT_R32 \
++	_IOWR(NVMAP_IOC_MAGIC, 10, struct nvmap_pin_handle_r32)
++#define NVMAP_IOC_UNPIN_MULT_R32 \
++	_IOW(NVMAP_IOC_MAGIC, 11, struct nvmap_pin_handle_r32)
+ #endif /* __KERNEL__ */
+ 
+ #define NVMAP_IOC_CACHE      _IOW(NVMAP_IOC_MAGIC, 12, struct nvmap_cache_op)
+@@ -337,6 +430,11 @@
+ 
+ #define NVMAP_IOC_PARAMETERS \
+ 	_IOR(NVMAP_IOC_MAGIC, 27, struct nvmap_handle_parameters)
++#ifdef __KERNEL__
++/* R32 (JP4) GET_HANDLE_PARAMETERS: _IOR('N', 27, 56-byte struct). */
++#define NVMAP_IOC_PARAMETERS_R32 \
++	_IOR(NVMAP_IOC_MAGIC, 27, struct nvmap_handle_parameters_r32)
++#endif /* __KERNEL__ */
+ 
+ /* START of T124 IOCTLS */
+ /* Actually allocates memory from IVM heaps */

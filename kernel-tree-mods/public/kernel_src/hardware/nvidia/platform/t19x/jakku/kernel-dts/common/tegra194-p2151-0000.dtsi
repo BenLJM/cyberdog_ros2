@@ -1,0 +1,479 @@
+/*
+ * Copyright (c) 2019-2021, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
+#include <dt-bindings/gpio/tegra194-gpio.h>
+#include "dt-bindings/input/input.h"
+#include "tegra194-fixed-regulator-p2151-0000.dtsi"
+#include "tegra194-p2151-disp.dtsi"
+#include "tegra194-audio-p3668.dtsi"
+#include "tegra194-camera-p2151.dtsi"
+
+/ {
+	gpio-keys {
+		compatible = "gpio-keys";
+		gpio-keys,name = "gpio-keys";
+
+		forcerecovery {
+			label = "force-recovery";
+			gpios = <&tegra_main_gpio TEGRA194_MAIN_GPIO(G, 0) GPIO_ACTIVE_LOW>;
+			linux,code = <BTN_1>;
+		};
+
+		power_key {
+			label = "power-key";
+			gpios = <&tegra_aon_gpio TEGRA194_AON_GPIO(EE, 4) GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_POWER>;
+			gpio-key,wakeup;
+		};
+	};
+
+#if TEGRA_PWM_FAN_DT_VERSION == DT_VERSION_2
+	pwm-fan {
+		compatible = "pwm-fan";
+		status = "okay";
+		#pwm-cells = <1>;
+		pwms = <&tegra_pwm8 0 45334>;
+		fan-supply = <&vdd_soc_fan>;
+		profiles {
+			default = "quiet";
+			quiet {
+				cooling-levels = <255 178 135 95 0 0 0 0 0 0>;
+			};
+			cool {
+				cooling-levels = <255 178 135 95 0 0 0 0 0 0>;
+			};
+		};
+	};
+	pwm-fan-case {
+		compatible = "pwm-fan";
+		status = "okay";
+		#pwm-cells = <1>;
+		pwms = <&tegra_pwm6 0 45334>;
+		fan-supply = <&vdd_case_fan>;
+		profiles {
+			default = "quiet";
+			quiet {
+				cooling-levels = <255 178 135 95 0 0 0 0 0 0>;
+			};
+			cool {
+				cooling-levels = <255 178 135 95 0 0 0 0 0 0>;
+			};
+		};
+	};
+#else
+	// soc fan
+	pfsd {
+		pwm_id = <8>;
+		pwm_gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(R, 0) GPIO_ACTIVE_LOW>;
+	};
+	pwm-fan {
+		pwms = <&tegra_pwm8 0 45334>;
+		vdd-fan-supply = <&p3509_vdd_fan>;
+		profiles {
+			default = "quiet";
+			quiet {
+				state_cap = <4>;
+				active_pwm = <0 130 160 200 255 255 255 255 255 255>;
+			};
+			cool {
+				state_cap = <4>;
+				active_pwm = <0 140 170 200 255 255 255 255 255 255>;
+			};
+		};
+	};
+	// case fan
+	pwm_fan_case_shared_data: pfsd-case {
+		num_resources = <0>;
+		secret = <47>;
+		active_steps = <10>;
+		active_rpm = <0 1000 2000 3000 4000 5000 6000 7000 10000 11000>;
+		rpm_diff_tolerance = <2>;
+		active_rru = <40 2 1 1 1 1 1 1 1 1>;
+		active_rrd = <40 2 1 1 1 1 1 1 1 1>;
+		state_cap_lookup = <2 2 2 2 3 3 3 4 4 4>;
+		pwm_period = <45334>;
+		pwm_id = <6>;
+		pwm_polarity = <PWM_POLARITY_INVERTED>;
+		suspend_state = <1>;
+		step_time = <100>; /* mesecs */
+		state_cap = <7>;
+		active_pwm_max = <256>;
+		tach_period = <1000>;
+		pwm_gpio = <&tegra_aon_gpio TEGRA194_MAIN_GPIO(H, 1) GPIO_ACTIVE_LOW>;
+		tach_gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(Q, 2) GPIO_ACTIVE_LOW>;
+	};
+	pwm-fan-case {
+		compatible = "pwm-fan";
+		status = "okay";
+		#pwm-cells = <1>;
+		pwms = <&tegra_pwm6 0 45334>;
+		vdd-fan-supply = <&p3509_vdd_fan>;
+		shared_data = <&pwm_fan_case_shared_data>;
+		profiles {
+			default = "quiet";
+			quiet {
+				state_cap = <4>;
+				active_pwm = <0 77 120 160 255 255 255 255 255 255>;
+			};
+			cool {
+				state_cap = <4>;
+				active_pwm = <0 77 120 160 255 255 255 255 255 255>;
+
+			};
+		};
+	};
+#endif
+	thermal-fan-est {
+		profiles {
+			default = "quiet";
+			quiet {
+				active_trip_temps = <0 46000 60000 68000 76000
+						140000 150000 160000 170000 180000>;
+				active_hysteresis = <0 8000 8000 7000 7000
+						0 0 0 0 0>;
+			};
+			cool {
+				active_trip_temps = <0 35000 45000 53000 61000
+						140000 150000 160000 170000 180000>;
+				active_hysteresis = <0 8000 8000 7000 7000
+						0 0 0 0 0>;
+			};
+		};
+	};
+	realsense_switch {
+		compatible = "reg-userspace-consumer";
+		regulator-name = "realsense_switch";
+		regulator-supplies = "default";
+		default-supply = <&vbus_realsns_5v>;
+		status = "okay";
+	};
+	wifi_bt_switch {
+		compatible = "reg-userspace-consumer";
+		regulator-boot-on;
+		regulator-name = "wifi_bt_switch";
+		regulator-supplies = "default";
+		default-supply = <&vdd_3v3_wlan_bt>;
+		status = "okay";
+	};
+	gps_switch {
+		compatible = "reg-userspace-consumer";
+		regulator-name = "gps_switch";
+		regulator-supplies = "vdd-3v3", "vdd-1v8";
+		vdd-3v3-supply = <&vdd_3v3_gps>;
+		vdd-1v8-supply = <&vdd_1v8_gps>;
+		status = "okay";
+	};
+	mcu_sensor_switch {
+		compatible = "reg-userspace-consumer";
+		regulator-name = "mcu_sensor_switch";
+		regulator-boot-on;
+		regulator-supplies = "head", "bot", "rear";
+		head-supply = <&head_mcu_sensor>;
+		bot-supply = <&bot_mcu_sensor>;
+		rear-supply = <&rear_mcu_sensor>;
+		status = "okay";
+	};
+	serial@3110000 {
+		status = "okay";
+	};
+	// disable THS4, AGX for M2 only
+	serial@3140000 {
+		status = "disabled";
+	};
+	// Case Tech
+	tachometer@39c0000 {
+		status = "okay";
+	};
+	// Case Fan
+	tegra_pwm6: pwm@32d0000 {
+		status = "okay";
+	};
+	// SoC Fan
+	tegra_pwm8: pwm@32f0000 {
+		status = "okay";
+	};
+
+	sdhci@3400000 {
+		status = "disabled";
+	};
+
+	gpio@2200000 {
+		/* gpio-name given as COL(10) x ROW(24),
+		   Tegra-GPIO starts from 288 */
+		gpio-line-names =
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "CASE_FAN_PWM", "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "GPIO13",       "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "GPIO_EXP1_INT",
+		"CASE_FAN_TACH","TOUCH_INT",    "",             "GPIO01",       "GPIO11",       "",             "SOC_FAN_PWM",  "",             "",             "",
+		"UART1_RTS",    "UART1_CTS",    "",             "",             "",             "",             "",             "",             "GPIO09",       "",
+		"",             "",             "",             "",             "",             "",             "",             "I2S0_SCLK",    "I2S0_DOUT",    "I2S0_DIN",
+		"I2S0_FS",      "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "SPI1_SCK",     "SPI1_MISO",    "SPI1_MOSI",    "SPI1_CS0",     "SPI1_CS1",     "",             "",             "",
+		"",             "USB0_VBUS_DET","",             "SPI0_SCK",     "SPI0_MISO",    "SPI0_MOSI",    "SPI0_CS0",     "SPI0_CS1",     "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "";
+	};
+
+	gpio@c2f0000 {
+		/* gpio-name given as COL(10) x ROW(2),
+		   Tegra-AON-GPIO starts from 248 */
+		gpio-line-names =
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "GPIO_EXP12_RST",
+		"GPIO_EXP2_INT","",             "",             "",             "",             "",             "",             "",             "",             "",
+		"",             "",             "",             "",             "",             "",             "",             "",             "",             "";
+	};
+
+	// NX     Ball  CVM/NX       NX/P3509           P2151
+	// GPIO00 PZ.01 USB_VBUS_EN0                    [USB0_VBUS_DET]
+	// GPIO01 PQ.05 EXTPERIPH3                      [OV7251_L_MCLK]
+	// GPIO02 PQ.03              (BT_M2_WAKE_AP)    [TOUCH_INT]
+	// GPIO03 CC.00              (BT_M2_EN)
+	// GPIO04 CC.01              (PWR_LED_CTRL)
+	// GPIO05 CC.02              (W_DISKABLE1_CTRL)
+	// GPIO06 CC.03              (CAM_MUX_SEL)      [GPIO_EXP12_RST]
+	// GPIO07 PR.00 PWM8                            [SOC_FAN_PWM]
+	// GPIO08 PQ.02 SDMMC_CD                        [CASE_FAN_TACH]
+	// GPIO09 PS.04 AUD_MCLK
+	// GPIO10 PQ.01              (M2E_ALERT)        [GPIO_EXP1_INT]
+	// GPIO11 PQ.06 EXTPERIPH4
+	// GPIO12 CC.04 PWM4                            [GPIO_EXP2_INT]
+	// GPIO13 PN.01 PWM1
+	// GPIO14 PH.01 PWM6                            [CASE_FAN_PWM]
+
+	i2c@3160000 {
+		status = "okay";
+
+		gpio_expand2: tca6424@22 {
+			compatible = "ti,tca6424"; // gpio-pca953x
+			reg = <0x22>;
+			// share a reset pin for two expanders is a dangerous design
+			// reset-gpio = <&tegra_aon_gpio TEGRA194_AON_GPIO(CC, 3) GPIO_ACTIVE_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "okay";
+			interrupt-parent = <&tegra_aon_gpio>;
+			interrupts = <TEGRA194_AON_GPIO(CC, 4) IRQ_TYPE_LEVEL_LOW>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			// x_LABEL is NOT sure
+			gpio-line-names =
+				"x_PROG_UTRA_F",   "x_NULL",             "x_RSTN_UTRA_F",      "CASE_FAN_EN",
+				"x_RSTN_HUB",      "x_RSTN_UTRA_R",      "x_INT_TOUCHPAD",     "TOUCHPAD_NRST",
+				"x_LED_DRIVER_EN", "x_NULL",             "GPS_NSTANDBY",       "x_H_HOST_REQ",
+				"x_MCU_RDY_GPS",   "x_MCU_REQ_GPS",      "FLASH_LED",          "TORCH_LED",
+				"GPS_3V3_EN",      "HEAD_SENSOR_3V3_EN", "SND_PA_1V8_EN",      "SND_CODEC_1V8_EN",
+				"GPS_1V8_EN",      "WLAN_BT_3V3_EN",     "REAR_SENSOR_3V3_EN", "x_SENSOR_1V8_EN";
+			// 03 CASE_FAN_EN: PROG_UTRA_R, unknown
+			// 07 TOUCHPAD_NRST: Synaptics touchpad reset, Low on reset
+			// 10 GPS_NSTANDBY: AP6155G/BCM4775 nstandby, Low on standby. Exposed to user space
+			// 14 FLASH_LED: Flash LED, high enable
+			// 15 TORCH_LED: Torch LED, high enable
+			// 16 GPS_3V3_EN: AP6155G/BCM4775 3v3 power, high enable
+			// 17 HEAD_SENSOR_3V3_EN: Head sensor 3v3 poewr, high enable
+			// 18 SND_PA_1V8_EN: TAS5805 1v8 power, high enable
+			// 19 SND_CODEC_1V8_EN: RT5680 1v8 power, high enable
+			// 20 GPS_1V8_EN: AP6155G/BCM4775 1v8 power, high enable
+			// 21 WLAN_BT_3V3_EN: 6221B/rtl8821cu 3v3 power, high enable
+			// 22 REAR_SENSOR_3V3_EN: Rear sensor 3v3 poewr, high enable
+		};
+
+		gpio_expand1: tca6424@23 {
+			compatible = "ti,tca6424";
+			reg = <0x23>;
+			// reset-gpio = <&tegra_aon_gpio TEGRA194_AON_GPIO(CC, 3) GPIO_ACTIVE_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-parent = <&tegra_main_gpio>;
+			interrupts = <TEGRA194_MAIN_GPIO(Q, 1) IRQ_TYPE_LEVEL_LOW>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			status = "okay";
+			// x_LABEL is NOT sure
+			gpio-line-names =
+				"CAM1_2V8_EN",      "CAM2_2V8_EN",         "CAM3_2V8_EN",       "CAMERA_1V8_EN",
+				"x_SEL1_MODE",      "x_RESET_CODEC",       "x_LDO1_EN_CODEC",   "SND_PA_PDN",
+				"BT_1V8_EN",        "x_HOST_WAKE_BT",      "x_BT_WAKE_HOST",    "WLAN_1V8_EN",
+				"x_WLAN_WAKE_HOST", "x_BOT_SENSOR_2V8_EN", "BOT_SENSOR_3V3_EN", "x_INT_TUSB322",
+				"x_VBUS_MOTION_EN", "REALSENSE_VBUS_EN",   "x_NULL",            "x_CAM3_STROBE",
+				"CAM3_PWDN",        "x_TOF_EN",            "x_CAM2_STROBE",     "x_TOF_GPIO1";
+			// 00 CAM1_2V8_EN: Canera1 2v8 power, high enable
+			// 01 CAM2_2V8_EN: Canera2 2v8 power, high enable
+			// 02 CAM3_2V8_EN: Canera3 2v8 power, high enable
+			// 03 CAMERA_1V8_EN: Canera1/2/3 1v8 power, high enable
+			// 07 SND_PA_PDN: TAS5805 power down, low power down, high enable
+			// 08 BT_EN: 6221B/rtl8821cu bluetooth enable, high enable
+			// 11 WLAN_EN: 6221B/rtl8821cu wifi enable, high enable
+			// 14 BOT_SENSOR_3V3_EN: Botton sensor(optical flow) 3v3 power, high enable
+			// 17 REALSENSE_VBUS_EN: Realsense vbus power, high enable
+			// 20 CAM3_PWDN: Canera3 power down, high enable
+		};
+
+
+		tas5805m: tas5805m@2c {
+			compatible = "ti,tas5805m";
+			reg = <0x2c>;
+			dvdd-supply = <&dvdd_codec_amp_1v8>;
+			pvdd-supply = <&pvdd_amp_12v>;
+			status = "disabled";
+		};
+
+		rt5680: rt5680@2d {
+			compatible = "realtek,rt5679";
+			reg = <0x2d>;
+			dvdd-supply = <&dvdd_codec_amp_1v8>;
+			avdd-supply = <&avdd_codec_1v8>;
+			status = "disabled";
+		};
+	};
+
+#define	CAM1_PWDN	TEGRA194_MAIN_GPIO(P, 4)
+#define	CAM2_PWDN	TEGRA194_MAIN_GPIO(P, 5)
+#define	CAM3_PWDN	20
+
+	i2c@3180000 {
+		ov7251_a@61 { // OV7251_R
+			clocks = <&bpmp_clks TEGRA194_CLK_EXTPERIPH2>,
+				 <&bpmp_clks TEGRA194_CLK_PLLP_OUT0>;
+			clock-names = "extperiph2", "pllp_grtba";
+			mclk = "extperiph2";
+			clock-frequency = <24000000>;
+			pwdn-gpios = <&tegra_main_gpio CAM2_PWDN GPIO_ACTIVE_HIGH>;
+			vana-supply = <&avdd_cam2_2v8>;
+			vif-supply = <&iovdd_cam_1v8>;
+			status = "okay";
+		};
+		ov7251_b@62 { // OV7251_L
+			clocks = <&bpmp_clks TEGRA194_CLK_EXTPERIPH3>,
+				 <&bpmp_clks TEGRA194_CLK_PLLP_OUT0>;
+			clock-names = "extperiph3", "pllp_grtba";
+			mclk = "extperiph3";
+			clock-frequency = <24000000>;
+			pwdn-gpios = <&gpio_expand1 CAM3_PWDN GPIO_ACTIVE_HIGH>;
+			vana-supply = <&avdd_cam3_2v8>;
+			vif-supply = <&iovdd_cam_1v8>;
+			status = "okay";
+		};
+		ov13b10_e@36 {
+			clocks = <&bpmp_clks TEGRA194_CLK_EXTPERIPH1>,
+				 <&bpmp_clks TEGRA194_CLK_PLLP_OUT0>;
+			clock-names = "extperiph1", "pllp_grtba";
+			mclk = "extperiph1";
+			clock-frequency = <19200000>;
+			pwdn-gpios = <&tegra_main_gpio CAM1_PWDN GPIO_ACTIVE_HIGH>;
+			vana-supply = <&avdd_cam1_2v8>;
+			vif-supply = <&iovdd_cam_1v8>;
+			status = "okay";
+		};
+	};
+
+	i2c@31e0000 {
+		status = "okay";
+
+		synaptics_dsx@20 {
+			compatible = "synaptics,dsx-i2c";
+			reg = <0x20>;
+			status = "disabled";
+			interrupt-parent = <&tegra_main_gpio>;
+			interrupts = <TEGRA194_MAIN_GPIO(Q, 3)  0x2002>;
+			synaptics,ub-i2c-addr = <0x2c>;
+			synaptics,irq-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(Q, 3) 0x2002>; // IRQF_ONESHOT|IRQF_TRIGGER_FALLING
+			synaptics,reset-gpio = <&gpio_expand2 7 0x00>;
+			synaptics,irq-on-state = <0>;
+			synaptics,power-delay-ms = <200>;
+			synaptics,reset-delay-ms = <200>;
+			synaptics,reset-on-state = <0>;
+			synaptics,reset-active-ms = <20>;
+			// uncomment and update line below as appropriate if there are 0D buttons
+			// synaptics,cap-button-codes = <102 158>;// use in debug, should be comment in final release!!!!
+			// uncomment and update lines below as appropriate if there are virtual buttons
+			// synaptics,vir-button-codes = <102 100 900 100 60 158 300 900 100 60>;
+			// synaptics,max-y-for-2d = <800>;
+	};
+	};
+
+	bcm4775 {
+		compatible = "bcm4775";
+		vdd-supply = <&vdd_1v8_gps>;
+		vddgps-supply = <&vdd_3v3_gps>;
+		nstandby-gpio = <&gpio_expand2 10 GPIO_ACTIVE_LOW>;
+		status = "okay";
+	};
+
+	leds {
+		flash {
+			gpios = <&gpio_expand2 14 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		torch {
+			gpios = <&gpio_expand2 15 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
+	ethernet@2490000 {
+		nvidia,skip_mac_reset = "0";
+	};
+
+	// PCIe C4
+	pcie@14160000 {
+		status = "disabled";
+	};
+
+	aconnect@2a41000 {
+		status = "disabled";
+	};
+
+	spdif_dit {
+		status = "disabled";
+	};
+
+	tegra_sound: sound {
+		status = "disabled";
+	};
+};
+
+/*
+ * 2026-07-20: release the shared active-low RESET of the two TCA6424 GPIO
+ * expanders (gpio_expand1@23 / gpio_expand2@22 on i2c@3160000). Xiaomi's 4.9
+ * gpio-pca953x carried a custom reset-gpio pulse; zbwu commented the DT
+ * reset-gpio out ("shared reset is a dangerous design"), so on 5.10 the
+ * expanders stay held in reset and NAK i2c (pca953x probe -121 EREMOTEIO) →
+ * gpio_expand2 never registers → every GPIO-gated fixed regulator
+ * (vdd_3v3_wlan_bt = Wi-Fi/BT power, camera vana/vif, gps, ...) defers -517 →
+ * no wlan0, no cameras. A gpio-hog driving the reset line HIGH (= de-asserted,
+ * active-low reset) from AON-gpio registration — before either expander probes
+ * — releases BOTH chips without the shared-claim / probe-order hazards of
+ * putting reset-gpios on the nodes. Reset pin = AON CC,3 (matches the factory
+ * JP4 DT reset-gpio <&tegra_aon_gpio 19 0>). See docs/PHASE4_BOOT_RESULTS.md.
+ */
+&tegra_aon_gpio {
+	tca6424_reset_release {
+		gpio-hog;
+		gpios = <TEGRA194_AON_GPIO(CC, 3) GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "tca6424-shared-reset";
+	};
+};

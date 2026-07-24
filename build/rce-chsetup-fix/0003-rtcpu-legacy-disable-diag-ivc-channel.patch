@@ -1,0 +1,61 @@
+From: CyberDog JP5 bring-up
+Subject: [PATCH] rtcpu legacy: disable "diag" IVC channel absent from factory R32 RCE FW
+
+Fixes RCE CH_SETUP failing with RTCPU_CH_ERR_NO_SERVICE (128) ->
+"IOVM setup error: 128" / "ivc-bus boot sync failed: -5" on JP5.
+
+R35's tegra194-camera.dtsi adds /camera-ivc-channels/diag@5
+(nvidia,service = "diag"), a service the CyberDog's factory R32-era RCE
+firmware in QSPI does not implement (verified: qspi-backup-factory.bin
+contains echo/debug/capture/capture-control but no "diag"). During
+tegra_ivc_bus_boot_sync() the FW walks the camrtc_tlv_ivc_setup chain and
+rejects the unknown "diag" service. ivc-bus.c (tegra_ivc_bus_start) skips
+status="disabled" children, so disabling diag@5 makes the config region
+advertise exactly the five services the R32 FW supports; CH_SETUP then
+succeeds. Capture (TAKE_PICTURE) does not use the diag/telemetry channel.
+
+The legacy hsp-mailbox-client CH_SETUP command itself
+(RTCPU_COMMAND(CH_SETUP, iova>>8)) is byte-identical to R32's
+tegra_camrtc_iovm_setup() -- no driver change is needed or made.
+
+Apply with: patch -p1 < 0003-...patch   (from hardware/nvidia/)
+---
+--- a/platform/t19x/jakku/kernel-dts/tegra194-mi-k91-rtcpu-legacy.dtsi
++++ b/platform/t19x/jakku/kernel-dts/tegra194-mi-k91-rtcpu-legacy.dtsi
+@@ -84,3 +84,36 @@
+ 		status = "okay";
+ 	};
+ };
++
++/*
++ * ------------------------------------------------------------------------
++ * CH_SETUP fix: drop the "diag" IVC channel the factory R32 FW lacks.
++ * ------------------------------------------------------------------------
++ * R35's tegra194-camera.dtsi adds /camera-ivc-channels/diag@5
++ * (compatible "nvidia,tegra186-camera-diagnostics", nvidia,service = "diag"),
++ * a service that did NOT exist in the CyberDog's factory R32-era RCE firmware
++ * (proven: `strings qspi-backup-factory.bin` finds echo/debug/capture/
++ * capture-control but ZERO "diag"; the JP4 working DT has no diag channel).
++ *
++ * At boot, tegra_ivc_bus_boot_sync() sends ONE CH_SETUP per region whose
++ * config area holds the chain of camrtc_tlv_ivc_setup TLVs that ivc-bus.c
++ * builds from these child nodes. The RCE FW walks the chain and, on the
++ * unknown "diag" service, returns RTCPU_CMD_ERROR / RTCPU_CH_ERR_NO_SERVICE
++ * (value 128, see camrtc-channels.h). That surfaces as:
++ *     tegra-ivc-bus ...: IOVM setup error: 128
++ *     ... rtcpu ...: ivc-bus boot sync failed: -5
++ * and no camera IVC/capture channel ever becomes ready.
++ *
++ * ivc-bus.c (tegra_ivc_bus_start) skips children with status = "disabled",
++ * so disabling diag@5 omits its TLV. The config region then advertises
++ * exactly the five services the R32 FW implements
++ * (echo, debug, debug, capture-control, capture) and CH_SETUP succeeds.
++ * diag is telemetry-only; the capture path (TAKE_PICTURE) does not use it.
++ *
++ * NB: the CH_SETUP *command* (RTCPU_COMMAND(CH_SETUP, iova>>8)) our legacy
++ * hsp-mailbox-client backport sends is byte-identical to R32's
++ * tegra_camrtc_iovm_setup() -- the 128 was never a command-sequence bug.
++ */
++&{/camera-ivc-channels/diag@5} {
++	status = "disabled";
++};
