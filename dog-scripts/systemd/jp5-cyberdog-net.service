@@ -1,0 +1,12 @@
+[Unit]
+Description=CyberDog internal net for JP5 (eth0->l4tbr0, mcast route, can0)
+After=nv-l4t-usb-device-mode.service network.target
+Wants=nv-l4t-usb-device-mode.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/jp5-cyberdog-net.sh
+
+[Install]
+WantedBy=multi-user.target

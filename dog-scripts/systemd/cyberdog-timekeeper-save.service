@@ -1,0 +1,6 @@
+[Unit]
+Description=CyberDog 时钟存盘
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cyberdog-timekeeper --save

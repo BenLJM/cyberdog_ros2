@@ -1,0 +1,13 @@
+[Unit]
+Description=CyberDog 长稳基线采集(只读 /proc,写 /var/log/cyberdog-health.tsv)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cyberdog-health.sh
+Restart=always
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

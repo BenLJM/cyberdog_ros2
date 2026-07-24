@@ -1,0 +1,49 @@
+#!/bin/bash
+# CyberDog 时钟单调地板 (2026-07-25)
+#
+# 病根:PMIC 备份 RTC (max77620/rtc0) 的备份电池/超容没电 —— 彻底断电后它回到
+#   2000-01-01,开机时 hctosys 把 2000 灌进系统时钟。NTP 通的时候 timesyncd 会在
+#   一两分钟内纠正,但"开机 → NTP 同步"之间的窗口里整个系统跑在 2000 年:
+#   日志时间戳错乱(实测同一次引导里出现 Jun 17 / Jul 23 / Jan 01)、TLS 证书校验失败、
+#   任何按时间的逻辑失效。没网的时候则永远停在 2000。
+#
+# 做法:周期性把当前时间存盘;开机时如果系统时间早于存盘时间,就推到存盘时间。
+#
+# 安全性质:**只会把时钟向前推,绝不向后拨**。所以即使存盘文件损坏/陈旧,
+#   最坏结果是时间偏早一点,不会破坏单调性,也不会覆盖 NTP 已经校准好的时间。
+#   这一点很重要 —— 时钟倒退会让 ROS2 DDS lease 和 LCM 时间戳直接错乱。
+
+set -u
+STAMP=/var/lib/cyberdog-timekeeper/stamp
+SANE_FLOOR=1750000000     # 2025-06-15,早于本工程任何时间点;低于此值一律视为"没走过"
+
+mkdir -p "$(dirname "$STAMP")" 2>/dev/null
+
+save() {
+    local now
+    now=$(date +%s)
+    # 系统时间本身还没被校准就别存盘,否则会把 2000 年固化下来
+    [ "$now" -lt "$SANE_FLOOR" ] && exit 0
+    echo "$now" > "$STAMP".tmp && sync && mv "$STAMP".tmp "$STAMP"
+}
+
+restore() {
+    local now saved
+    now=$(date +%s)
+    saved=$(cat "$STAMP" 2>/dev/null)
+    case "$saved" in ''|*[!0-9]*) exit 0 ;; esac
+    [ "$saved" -lt "$SANE_FLOOR" ] && exit 0
+    # 只向前推
+    if [ "$now" -lt "$saved" ]; then
+        date -s "@$saved" >/dev/null 2>&1
+        # 同时把 PMIC RTC 拨对,免得 hctosys 下次又灌回 2000
+        hwclock --systohc -f /dev/rtc0 >/dev/null 2>&1
+        logger -t cyberdog-timekeeper "系统时钟 $(date -d "@$now" '+%F %T') 早于存盘值,已推到 $(date -d "@$saved" '+%F %T')"
+    fi
+}
+
+case "${1:-}" in
+    --save)    save ;;
+    --restore) restore ;;
+    *) echo "用法: $0 --save|--restore" >&2; exit 2 ;;
+esac

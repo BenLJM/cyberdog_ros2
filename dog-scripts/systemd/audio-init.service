@@ -1,0 +1,17 @@
+[Unit]
+Description=CyberDog audio codec init (JP4 golden state replay)
+After=sound.target
+# 必须先于出厂栈:栈里的 athena_audio/pulseaudio 会抢占声卡。
+# v1 没有任何排序约束,靠"audio-init 的 60s 等卡循环通常比栈的 90s lcm-wait 快"
+# 这个巧合,慢一次就静默失声。
+Before=jp5-cyberdog-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/audio-init.sh
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

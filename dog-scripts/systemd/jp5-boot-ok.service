@@ -1,0 +1,18 @@
+# jp5-boot-ok.service — mark a JP5 boot as SUCCESSFUL by clearing the
+# boot-attempt counter the initrd guard increments on every pass.
+# Install (Phase 4 rootfs staging, chroot into the p2 rootfs):
+#   install -m 755 jp5-boot-ok.sh  /usr/local/sbin/jp5-boot-ok
+#   install -m 644 jp5-boot-ok.service /etc/systemd/system/
+#   systemctl enable jp5-boot-ok.service
+[Unit]
+Description=Clear JP5 boot-attempt counter after a successful boot
+# "successful" = we made it to multi-user; the counter must NOT be cleared by
+# a boot that dies in early userspace, so this is ordered late on purpose.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jp5-boot-ok
+
+[Install]
+WantedBy=multi-user.target

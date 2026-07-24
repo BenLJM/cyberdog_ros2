@@ -88,6 +88,12 @@ CONFIG_MEMORY_FAILURE=y
 CONFIG_TRANSPARENT_HUGEPAGE=y
 CONFIG_CMA=y
 CONFIG_ZSMALLOC=y
+# CyberDog JP5 port (2026-07-25): nvzramconfig.service failed every boot because
+# CONFIG_ZRAM was never set.  It must be =m, NOT =y: nvzramconfig.sh runs
+# `modprobe zram num_devices=N`, and num_devices is a module_param -- built in,
+# it is only settable on the kernel cmdline and the service fails all the same.
+# CRYPTO_LZO is pulled in by ZRAM's `select`.
+CONFIG_ZRAM=m
 CONFIG_NET=y
 CONFIG_PACKET=y
 CONFIG_UNIX=y

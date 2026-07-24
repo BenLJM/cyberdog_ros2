@@ -1,0 +1,7 @@
+[Unit]
+Description=Deadman flight recorder
+[Service]
+ExecStart=/usr/local/bin/deadman.sh
+Restart=always
+[Install]
+WantedBy=multi-user.target

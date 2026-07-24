@@ -1,0 +1,17 @@
+[Unit]
+Description=CyberDog JP4 factory stack in chroot (JP5 host)
+After=jp5-cyberdog-net.service
+Requires=jp5-cyberdog-net.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStartPre=/usr/local/bin/jp5-lcm-wait.sh
+ExecStart=/usr/sbin/chroot /mnt/jp4 /bin/su - mi -c /home/mi/jp5-stack-inner.sh
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=25
+
+[Install]
+WantedBy=multi-user.target

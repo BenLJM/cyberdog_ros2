@@ -1,0 +1,7 @@
+[Unit]
+Description=BPMP-direct fan control + thermal guard
+[Service]
+ExecStart=/usr/local/bin/fanboy.sh
+Restart=always
+[Install]
+WantedBy=multi-user.target

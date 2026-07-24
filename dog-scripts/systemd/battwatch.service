@@ -1,0 +1,5 @@
+[Unit]
+Description=Battery charge logger
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/battwatch.sh
