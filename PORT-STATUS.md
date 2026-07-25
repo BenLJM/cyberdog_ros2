@@ -185,3 +185,50 @@ argus:  Error IoctlFailed → Failed to create CameraProvider → 断言失败
 整机零影响（0 failed 单元、0 内核崩溃、WiFi/音频/6核/9 video 节点全在）。**这个内核留着是安全的。**
 
 **下一步**：GoS 表是最该证伪的一件事，且便宜——在 JP4 引导下抓一次 `num_vi_gos_tables` 实际值。
+
+## 🔊 喇叭修复完成（2026-07-26，机主亲耳验证）
+
+**验证方式最硬**：修好后机主听到了**出厂语音播报**（"开始充电"、"电量低于10%"）自己响起来——不是测试音，是工厂栈自己发的。
+
+**病根**：pulseaudio 只能选到单声道 profile，而 TAS5805M 需要立体声 I2S 帧，收到单声道帧就报 `CLK_FAULT` 并静音。
+
+```
+默认 profile-set: [Mapping analog-stereo] device-strings = front:%f   ← 这块卡没有 front:1 → profile 不可用
+                  [Mapping analog-mono]   device-strings = hw:%f      ← 可用 → 只能选单声道
+```
+
+**修法（两处，都极小）**：
+1. `/usr/share/pulseaudio/alsa-mixer/profile-sets/cyberdog.conf`（复制 default.conf，**只改 2 行**）：
+   `analog-stereo` 的 `device-strings` 改成 `hw:%f`、`priority` 提到 20
+2. 宿主 `/etc/udev/rules.d/91-cyberdog-pulse-stereo.rules`（1 行）：
+   `SUBSYSTEM=="sound", KERNEL=="card*", ATTR{id}=="jetsonxaviernxa", ENV{PULSE_PROFILE_SET}="cyberdog.conf"`
+
+**⚠️ 踩过的坑**：`load-module module-udev-detect profile_set=xxx` 在 **PulseAudio 11.1 上不支持**，会 `Failed to parse module arguments` → `Module load failed` → **整个 pulse 起不来**。必须走 udev 属性这条路。备份在 `default.pa.bak-mono`。
+
+**验证结果**：
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| 声卡 profile | `output:analog-mono+input:analog-mono` | `output:analog-stereo+input:analog-stereo` |
+| sink | 1ch | **2ch 48000Hz RUNNING** |
+| 麦克风 source | 正常 | **仍正常**（未被破坏） |
+| 功放 `0x71` | `0x04` CLK_FAULT | `0x00` 无故障（放音时） |
+| pulseaudio CPU | 89% → 3%（路由修复）| **0%** |
+| 出厂语音播报 | 静默 | **能听到** |
+
+判据补充：功放空闲时 `0x71=0x04` 是**正常**的（无流即无时钟），只有放音期间读到 `0x00` 才算通。
+
+## 🔌 充电/电池（2026-07-26 实测确诊）
+- 适配器插了数天，实测**充电电流恒为 0~40mA**（真充电是 3A），`checkcharge.sh` 判定"适配器已识别但没充上"
+- **拔掉适配器后空载 15 秒内 SOC 从 17% 塌到 0%**，电压每 5 秒掉 80mV → **电芯失效/内阻过大，电池报废**
+- "开始充电"语音只代表适配器被识别，**不代表真在充电**
+- 机主已决定：先不换，全部工作完成后再买新电池
+
+## 🚫 运动锁存 = 适配器联锁（不是欠压锁存，机主判断）
+`[State_Detection] Locking state & Error state detected. Checking to passive` 5Hz 刷屏 = **充电中禁止运动的安全联锁**。
+**实测**：拔掉适配器后 26次/5秒 → 0，插回来又出现。
+→ **不需要长按断电清锁存**；站立前拔适配器即可（与旧记忆"站立前必须拔适配器"一致，现已从"疑似"升为实测）。
+
+## ⚠️ USB 线插着断电会进 RCM
+电池塌陷导致断电后，因下载口插着 USB 线，重新上电进了 **RCM（USB ID 变 `0955:7e19` APX，串口消失）**。
+恢复：插好适配器 → **拔掉 USB 线** → 长按电源到灯全灭 → 开机。
+本次恢复后 `PMC reset source: SYS_RESET_N`（真硬件复位），**全家桶全自动恢复、0 failed 单元** —— 这是"零人工干预"约束的一次有分量验证。
