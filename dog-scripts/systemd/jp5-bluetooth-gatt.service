@@ -1,0 +1,17 @@
+[Unit]
+Description=CyberDog 蓝牙 GATT 服务(chroot 跑出厂 bluetooth gattserver)
+After=bluetooth.service jp5-cyberdog-stack.service
+Requires=bluetooth.service
+PartOf=jp5-cyberdog-stack.service
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=idle
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStart=/usr/local/bin/jp5-bluetooth-gatt.sh
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
