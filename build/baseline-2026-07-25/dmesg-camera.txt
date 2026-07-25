@@ -1,0 +1,130 @@
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0xe6a171046, max_idle_ns: 881590405314 ns
+[    0.153087] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.170159] ramoops reserved-memory:ramoops_carveout: failed to locate DT /reserved-memory resource
+[    0.300481] videodev: Linux video capture interface: v2.00
+[    0.305206] clocksource: Switched to clocksource arch_sys_counter
+[    0.868618] tegradccommon 15200000.display-hub: Nvhost Channel map failed
+[    0.872610] tegra-pmc: ### PMC reset source: MAINSWRST
+[    2.101988] arm-smmu 10000000.iommu: probing hardware configuration...
+[    2.106460] arm-smmu 10000000.iommu: SMMUv2 with:
+[    2.111179] arm-smmu 10000000.iommu: 	stage 1 translation
+[    2.116277] arm-smmu 10000000.iommu: 	stage 2 translation
+[    2.121933] arm-smmu 10000000.iommu: 	nested translation
+[    2.127194] arm-smmu 10000000.iommu: 	stream matching with 128 register groups
+[    2.134380] arm-smmu 10000000.iommu: 	64 context banks (0 stage-2 only)
+[    2.144207] arm-smmu 10000000.iommu: 	Supported page sizes: 0x00001000
+[    2.147931] arm-smmu 10000000.iommu: 	Stage-1: 48-bit VA -> 48-bit IPA
+[    2.154138] arm-smmu 10000000.iommu: 	Stage-2: 48-bit IPA -> 48-bit PA
+[    2.162280] arm-smmu 12000000.iommu: probing hardware configuration...
+[    2.167442] arm-smmu 12000000.iommu: SMMUv2 with:
+[    2.172188] arm-smmu 12000000.iommu: 	stage 1 translation
+[    2.177413] arm-smmu 12000000.iommu: 	stage 2 translation
+[    2.183097] arm-smmu 12000000.iommu: 	nested translation
+[    2.188266] arm-smmu 12000000.iommu: 	stream matching with 128 register groups
+[    2.195483] arm-smmu 12000000.iommu: 	64 context banks (0 stage-2 only)
+[    2.205150] arm-smmu 12000000.iommu: 	Supported page sizes: 0x00001000
+[    2.208545] arm-smmu 12000000.iommu: 	Stage-1: 48-bit VA -> 48-bit IPA
+[    2.215384] arm-smmu 12000000.iommu: 	Stage-2: 48-bit IPA -> 48-bit PA
+[    2.222599] arm-smmu-suspend 12000000.smmu_suspend: arm_smmu_suspend probe successful
+[    2.249651] THERMAL EST num_resources: 0
+[    3.236823]  bc00000.rtcpu:hsp: no hsp protocol "nvidia,tegra-camrtc-hsp-vm"
+[    3.327326] tegra-ivc-bus bc00000.rtcpu:ivc-bus:ivccapture@4: ivccapture: ver=0 grp=1 RX[512x64]=0xff80-0x18000 TX[512x64]=0x18000-0x20080
+[    3.328994] tegra186-cam-rtcpu bc00000.rtcpu: tegra_camrtc_mon_create is successful
+[    3.331478] tegra186-cam-rtcpu bc00000.rtcpu: firmware version cpu=rce cmd=5 sha1=cf2bef3ad10e437272857b76308abef8ffb80bda
+[    3.630314] pci_bus 0005:00: root bus resource [bus 00-ff]
+[    3.630443] pci_bus 0005:00: root bus resource [io  0x0000-0xfffff] (bus address [0x3a100000-0x3a1fffff])
+[    3.630638] pci_bus 0005:00: root bus resource [mem 0x1c00000000-0x1f3fffffff pref]
+[    3.630808] pci_bus 0005:00: root bus resource [mem 0x1f40000000-0x1fffffffff] (bus address [0x40000000-0xffffffff])
+[    3.689881] host1x 13e10000.host1x: Adding to iommu group 7
+[    3.704343] host1x 13e10000.host1x: initialized
+[    3.705288] iommu_context_dev 13e10000.host1x:ctx0: Adding to iommu group 8
+[    3.705761] iommu_context_dev 13e10000.host1x:ctx0: initialized (streamid=56, iommu=smmu.0x0000000012000000)
+[    3.713928] iommu_context_dev 13e10000.host1x:ctx1: Adding to iommu group 9
+[    3.720760] iommu_context_dev 13e10000.host1x:ctx1: initialized (streamid=57, iommu=smmu.0x0000000012000000)
+[    3.731063] iommu_context_dev 13e10000.host1x:ctx2: Adding to iommu group 10
+[    3.737733] iommu_context_dev 13e10000.host1x:ctx2: initialized (streamid=58, iommu=smmu.0x0000000012000000)
+[    3.753072] iommu_context_dev 13e10000.host1x:ctx3: Adding to iommu group 11
+[    3.764984] iommu_context_dev 13e10000.host1x:ctx3: initialized (streamid=59, iommu=smmu.0x0000000012000000)
+[    3.780345] iommu_context_dev 13e10000.host1x:ctx4: Adding to iommu group 12
+[    3.790469] iommu_context_dev 13e10000.host1x:ctx4: initialized (streamid=60, iommu=smmu.0x0000000012000000)
+[    3.800613] iommu_context_dev 13e10000.host1x:ctx5: Adding to iommu group 13
+[    3.807703] iommu_context_dev 13e10000.host1x:ctx5: initialized (streamid=61, iommu=smmu.0x0000000012000000)
+[    3.817419] iommu_context_dev 13e10000.host1x:ctx6: Adding to iommu group 14
+[    3.824363] iommu_context_dev 13e10000.host1x:ctx6: initialized (streamid=62, iommu=smmu.0x0000000012000000)
+[    3.834513] iommu_context_dev 13e10000.host1x:ctx7: Adding to iommu group 15
+[    3.841150] iommu_context_dev 13e10000.host1x:ctx7: initialized (streamid=63, iommu=smmu.0x0000000012000000)
+[    3.987854] misc tegra_camera_ctrl: tegra_camera_isomgr_register isp_iso_bw=4687500, vi_iso_bw=2250000, max_bw=4687500
+[    3.996728] tegra194-isp5 13e10000.host1x:isp@14800000: Adding to iommu group 19
+[    4.005651] t194-nvcsi 13e10000.host1x:nvcsi@15a00000: context isolation disabled due to no IOMMU
+[    4.012992] t194-nvcsi 13e10000.host1x:nvcsi@15a00000: initialized
+[    4.019039] tegra-camrtc-capture-vi tegra-capture-vi: subdev 13e10000.host1x:nvcsi@15a00000- bound
+[    4.028359] tegra-camrtc-capture-vi tegra-capture-vi: subdev 13e10000.host1x:nvcsi@15a00000- bound
+[    4.037319] tegra-camrtc-capture-vi tegra-capture-vi: subdev 13e10000.host1x:nvcsi@15a00000- bound
+[    4.046336] tegra194-vi5 15c10000.vi: Adding to iommu group 20
+[    4.052291] scare-pigeon 13e10000.host1x:vi-thi@15f00000: context isolation disabled due to no IOMMU
+[    4.061462] scare-pigeon 13e10000.host1x:vi-thi@15f00000: initialized
+[    4.067906] scare-pigeon 13e10000.host1x:isp-thi@14b00000: context isolation disabled due to no IOMMU
+[    4.077301] scare-pigeon 13e10000.host1x:isp-thi@14b00000: initialized
+[    4.123380] tegradccommon 15200000.display-hub: host1x channel mapped
+[    4.123710] tegradc 15200000.display: Adding to iommu group 25
+[    4.124226] tegra_cec 3960000.tegra_cec: Unpowergated DISP
+[    4.128528] tegradccommon 15200000.display-hub: dc_common syncpt # 1 allocated
+[    4.128569] tegradccommon 15200000.display-hub: dma mapping done
+[    4.135420] tegradc 15200000.display: disp0 connected to head0->sor1
+[    4.159700] tegradc 15200000.display: DT parsed successfully
+[    4.170345] tegradc 15200000.display: Display dc.(____ptrval____) registered with id=0
+[    4.183985] tegra_nvdisp_bandwidth_register_max_config: max config iso bw = 7088400 KB/s
+[    4.193585] tegra_nvdisp_bandwidth_register_max_config: max config EMC floor = 800000000 Hz
+[    4.193591] tegra_nvdisp_bandwidth_register_max_config: max config hubclk = 300000000 Hz
+[    4.193887] tegradc 15200000.display: vblank syncpt # 8 for dc 0
+[    4.207526] tegradc 15200000.display: vpulse3 syncpt # 9 for dc 0
+[    4.223489] tegradc 15200000.display: hdmi: can't get adpater for ddc bus 3
+[    4.236882] tegradc 15200000.display: out->type:1 out_ops->init err = -517
+[    4.662867] tegra194-isp5 13e10000.host1x:isp@14800000: initialized
+[    4.673982] tegra194-vi5 15c10000.vi: initialized
+[    4.678881] tegradc 15200000.display: disp0 connected to head0->sor1
+[    4.692367] tegradc 15200000.display: DT parsed successfully
+[    4.706267] tegradc 15200000.display: Display dc.(____ptrval____) registered with id=0
+[    4.721071] tegra_nvdisp_bandwidth_register_max_config: max config iso bw = 7088400 KB/s
+[    4.734950] tegra_nvdisp_bandwidth_register_max_config: max config EMC floor = 800000000 Hz
+[    4.749391] tegra_nvdisp_bandwidth_register_max_config: max config hubclk = 300000000 Hz
+[    4.749658] tegradc 15200000.display: vblank syncpt # 11 for dc 0
+[    4.764432] tegradc 15200000.display: vpulse3 syncpt # 12 for dc 0
+[    4.766018] tegradc 15200000.display: hdmi: invalid prod list prod_list_hdmi_board
+[    4.781052] tegradc 15200000.display: hdmi: tegra_hdmi_tmds_range_read(bd) failed
+[    4.819578] tegradc 15200000.display: probed
+[    4.920007] tegradc 15200000.display: fb registered
+[    5.063730] tegra-se-nvhost 15810000.se: Adding to iommu group 27
+[    5.064981] tegra-se-nvhost 15810000.se: initialized
+[    5.066372] tegra-se-nvhost 15810000.se: tegra_se_probe: complete
+[    5.066808] tegra-se-nvhost 15820000.se: Adding to iommu group 28
+[    5.067470] tegra-se-nvhost 15820000.se: initialized
+[    5.069343] tegra-se-nvhost 15820000.se: tegra_se_probe: complete
+[    5.069764] tegra-se-nvhost 15830000.se: Adding to iommu group 29
+[    5.070895] tegra-se-nvhost 15830000.se: initialized
+[    5.076269] tegra-se-nvhost 15830000.se: tegra_se_probe: complete
+[    5.081569] tegra-se-nvhost 15840000.se: Adding to iommu group 30
+[    5.088333] tegra-se-nvhost 15840000.se: initialized
+[    5.094223] tegra-se-nvhost 15840000.se: tegra_se_probe: complete
+[   16.562272] nvmap_heap_init: nvmap_heap_init: created heap block cache
+[   16.563135] nvmap_page_pool_init: Total RAM pages: 1985543
+[   16.563311] nvmap_page_pool_init: nvmap page pool size: 248192 pages (969 MB)
+[   16.563658] nvmap_background_zero_thread: PP zeroing thread starting.
+[   16.563978] misc nvmap: cvsram :dma coherent mem declare 0x0000000050000000,4194304
+[   16.564159] misc nvmap: created heap cvsram base 0x0000000050000000 size (4096KiB)
+[   16.928684] nvgpu: 17000000.gv11b          nvgpu_nvhost_syncpt_init:135  [INFO]  syncpt_unit_base 60000000 syncpt_unit_size 400000 size 1000
+[   17.669648] ov7251 2-0061: probing v4l2 sensor.
+[   17.670109] ov7251 2-0061: tegracam sensor driver:ov7251_v2.0.6
+[   17.670187] tegra-camrtc-capture-vi tegra-capture-vi: subdev ov7251 2-0061 bound
+[   17.684193] ov7251 2-0062: probing v4l2 sensor.
+[   17.684916] ov7251 2-0062: tegracam sensor driver:ov7251_v2.0.6
+[   17.684986] tegra-camrtc-capture-vi tegra-capture-vi: subdev ov7251 2-0062 bound
+[   17.686493] ov13b10 2-0036: probing v4l2 sensor.
+[   17.686930] ov13b10 2-0036: tegracam sensor driver:ov13b10_v2.0.6
+[   17.686993] tegra-camrtc-capture-vi tegra-capture-vi: subdev ov13b10 2-0036 bound
+[   23.150364] usb 2-3.3: Product: Intel(R) RealSense(TM) Depth Camera 455 
+[   23.150410] usb 2-3.3: Manufacturer: Intel(R) RealSense(TM) Depth Camera 455 
+[   23.156608] uvcvideo: Found UVC 1.50 device Intel(R) RealSense(TM) Depth Camera 455  (8086:0b5c)
+[   23.163622] uvcvideo: Found UVC 1.50 device Intel(R) RealSense(TM) Depth Camera 455  (8086:0b5c)
+[   28.985879] tegradc 15200000.display: blank - powerdown

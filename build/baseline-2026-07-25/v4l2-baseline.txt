@@ -1,0 +1,252 @@
+########## /sys/class/video4linux/*/name ##########
+/sys/class/video4linux/v4l-subdev0/name = 13e10000.host1x:nvcsi@15a00000-
+/sys/class/video4linux/v4l-subdev1/name = 13e10000.host1x:nvcsi@15a00000-
+/sys/class/video4linux/v4l-subdev2/name = 13e10000.host1x:nvcsi@15a00000-
+/sys/class/video4linux/v4l-subdev3/name = ov7251 2-0061
+/sys/class/video4linux/v4l-subdev4/name = ov7251 2-0062
+/sys/class/video4linux/v4l-subdev5/name = ov13b10 2-0036
+/sys/class/video4linux/video0/name = vi-output, ov7251 2-0061
+/sys/class/video4linux/video1/name = vi-output, ov7251 2-0062
+/sys/class/video4linux/video2/name = vi-output, ov13b10 2-0036
+/sys/class/video4linux/video3/name = Intel(R) RealSense(TM) Depth Ca
+/sys/class/video4linux/video4/name = Intel(R) RealSense(TM) Depth Ca
+/sys/class/video4linux/video5/name = Intel(R) RealSense(TM) Depth Ca
+/sys/class/video4linux/video6/name = Intel(R) RealSense(TM) Depth Ca
+/sys/class/video4linux/video7/name = Intel(R) RealSense(TM) Depth Ca
+/sys/class/video4linux/video8/name = Intel(R) RealSense(TM) Depth Ca
+########## video node -> driver (uevent) ##########
+== /sys/class/video4linux/video0
+MAJOR=81
+MINOR=0
+DEVNAME=video0
+  devpath: /platform/tegra-capture-vi/video4linux/video0
+== /sys/class/video4linux/video1
+MAJOR=81
+MINOR=5
+DEVNAME=video1
+  devpath: /platform/tegra-capture-vi/video4linux/video1
+== /sys/class/video4linux/video2
+MAJOR=81
+MINOR=7
+DEVNAME=video2
+  devpath: /platform/tegra-capture-vi/video4linux/video2
+== /sys/class/video4linux/video3
+MAJOR=81
+MINOR=9
+DEVNAME=video3
+  devpath: /platform/3610000.xhci/usb2/2-3/2-3.3/2-3.3:1.0/video4linux/video3
+== /sys/class/video4linux/video4
+MAJOR=81
+MINOR=10
+DEVNAME=video4
+  devpath: /platform/3610000.xhci/usb2/2-3/2-3.3/2-3.3:1.0/video4linux/video4
+== /sys/class/video4linux/video5
+MAJOR=81
+MINOR=11
+DEVNAME=video5
+  devpath: /platform/3610000.xhci/usb2/2-3/2-3.3/2-3.3:1.0/video4linux/video5
+== /sys/class/video4linux/video6
+MAJOR=81
+MINOR=12
+DEVNAME=video6
+  devpath: /platform/3610000.xhci/usb2/2-3/2-3.3/2-3.3:1.0/video4linux/video6
+== /sys/class/video4linux/video7
+MAJOR=81
+MINOR=13
+DEVNAME=video7
+  devpath: /platform/3610000.xhci/usb2/2-3/2-3.3/2-3.3:1.3/video4linux/video7
+== /sys/class/video4linux/video8
+MAJOR=81
+MINOR=14
+DEVNAME=video8
+  devpath: /platform/3610000.xhci/usb2/2-3/2-3.3/2-3.3:1.3/video4linux/video8
+########## v4l2 caps ##########
+=== /dev/video0
+Driver Info:
+	Driver name      : tegra-video
+	Card type        : vi-output, ov7251 2-0061
+	Bus info         : platform:tegra-capture-vi:0
+	Driver version   : 5.10.216
+	Capabilities     : 0x84200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : tegra-camrtc-ca
+	Model            : NVIDIA Tegra Video Input Device
+	Serial           : 
+	Bus info         : 
+	Media version    : 5.10.216
+=== /dev/video1
+Driver Info:
+	Driver name      : tegra-video
+	Card type        : vi-output, ov7251 2-0062
+	Bus info         : platform:tegra-capture-vi:1
+	Driver version   : 5.10.216
+	Capabilities     : 0x84200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : tegra-camrtc-ca
+	Model            : NVIDIA Tegra Video Input Device
+	Serial           : 
+	Bus info         : 
+	Media version    : 5.10.216
+=== /dev/video2
+Driver Info:
+	Driver name      : tegra-video
+	Card type        : vi-output, ov13b10 2-0036
+	Bus info         : platform:tegra-capture-vi:4
+	Driver version   : 5.10.216
+	Capabilities     : 0x84200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : tegra-camrtc-ca
+	Model            : NVIDIA Tegra Video Input Device
+	Serial           : 
+	Bus info         : 
+	Media version    : 5.10.216
+=== /dev/video3
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : Intel(R) RealSense(TM) Depth Ca
+	Bus info         : usb-3610000.xhci-3.3
+	Driver version   : 5.10.216
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : Intel(R) RealSense(TM) Depth Ca
+	Serial           : 112523061017
+	Bus info         : usb-3610000.xhci-3.3
+=== /dev/video4
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : Intel(R) RealSense(TM) Depth Ca
+	Bus info         : usb-3610000.xhci-3.3
+	Driver version   : 5.10.216
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04a00000
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : Intel(R) RealSense(TM) Depth Ca
+	Serial           : 112523061017
+	Bus info         : usb-3610000.xhci-3.3
+=== /dev/video5
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : Intel(R) RealSense(TM) Depth Ca
+	Bus info         : usb-3610000.xhci-3.3
+	Driver version   : 5.10.216
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : Intel(R) RealSense(TM) Depth Ca
+	Serial           : 112523061017
+	Bus info         : usb-3610000.xhci-3.3
+=== /dev/video6
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : Intel(R) RealSense(TM) Depth Ca
+	Bus info         : usb-3610000.xhci-3.3
+	Driver version   : 5.10.216
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04a00000
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : Intel(R) RealSense(TM) Depth Ca
+	Serial           : 112523061017
+	Bus info         : usb-3610000.xhci-3.3
+=== /dev/video7
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : Intel(R) RealSense(TM) Depth Ca
+	Bus info         : usb-3610000.xhci-3.3
+	Driver version   : 5.10.216
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : Intel(R) RealSense(TM) Depth Ca
+	Serial           : 112523061017
+	Bus info         : usb-3610000.xhci-3.3
+=== /dev/video8
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : Intel(R) RealSense(TM) Depth Ca
+	Bus info         : usb-3610000.xhci-3.3
+	Driver version   : 5.10.216
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04a00000
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : Intel(R) RealSense(TM) Depth Ca
+	Serial           : 112523061017
+	Bus info         : usb-3610000.xhci-3.3

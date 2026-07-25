@@ -1,0 +1,33 @@
+diff -uNr a/nvidia/drivers/media/platform/tegra/camera/nvcsi/csi5_fops.c b/nvidia/drivers/media/platform/tegra/camera/nvcsi/csi5_fops.c
+--- a/nvidia/drivers/media/platform/tegra/camera/nvcsi/csi5_fops.c	2026-07-25 10:49:02
++++ b/nvidia/drivers/media/platform/tegra/camera/nvcsi/csi5_fops.c	2026-07-25 11:04:22
+@@ -388,6 +388,21 @@
+ 	}
+ }
+ 
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
++/*
++ * r32-abi: CAPTURE_CSI_STREAM_TPG_APPLY_GAIN_REQ (and the whole
++ * CAPTURE_CSI_STREAM_TPG_GAIN_RATIO_* enum) was introduced after r32 and does
++ * not exist in the r32 RCE firmware message set.  There is no opcode to send,
++ * so the control is reported as unsupported.  This only affects the NVCSI test
++ * pattern generator (pg_mode); it is not on any real-sensor capture path.
++ */
++int csi5_tpg_set_gain(struct tegra_csi_channel *chan, int gain_ratio_tpg)
++{
++	(void)chan;
++	(void)gain_ratio_tpg;
++	return -EOPNOTSUPP;
++}
++#else
+ /* Transform the user mode setting to TPG recoginzable equivalent. Gain ratio
+  * supported by TPG is in range of 0.125 to 8. From userspace we multiply the
+  * gain setting by 8, before v4l2 ioctl call. It is tranformed before
+@@ -448,6 +463,7 @@
+ 
+ 	return err;
+ }
++#endif /* CONFIG_TEGRA_CAPTURE_R32_ABI */
+ 
+ static int csi5_start_streaming(struct tegra_csi_channel *chan, int port_idx)
+ {

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run D455 camera doctor every 5 minutes
+
+[Timer]
+# 开机 6 分钟后第一次(给冷启动 USB 枚举 + initial_reset + 节点起流留足时间)
+OnBootSec=6min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=d455-doctor.service
+
+[Install]
+WantedBy=timers.target

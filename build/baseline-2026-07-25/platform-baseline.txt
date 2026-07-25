@@ -1,0 +1,167 @@
+########## capture char devices ##########
+crw-rw---- 1 root video 248,  0 Jul 24 19:23 /dev/capture-isp-channel0
+crw-rw---- 1 root video 248,  1 Jul 24 19:23 /dev/capture-isp-channel1
+crw-rw---- 1 root video 248, 10 Jul 24 19:23 /dev/capture-isp-channel10
+crw-rw---- 1 root video 248, 11 Jul 24 19:23 /dev/capture-isp-channel11
+crw-rw---- 1 root video 248, 12 Jul 24 19:23 /dev/capture-isp-channel12
+crw-rw---- 1 root video 248, 13 Jul 24 19:23 /dev/capture-isp-channel13
+crw-rw---- 1 root video 248, 14 Jul 24 19:23 /dev/capture-isp-channel14
+crw-rw---- 1 root video 248, 15 Jul 24 19:23 /dev/capture-isp-channel15
+crw-rw---- 1 root video 248, 16 Jul 24 19:23 /dev/capture-isp-channel16
+crw-rw---- 1 root video 248, 17 Jul 24 19:23 /dev/capture-isp-channel17
+crw-rw---- 1 root video 248, 18 Jul 24 19:23 /dev/capture-isp-channel18
+crw-rw---- 1 root video 248, 19 Jul 24 19:23 /dev/capture-isp-channel19
+crw-rw---- 1 root video 248,  2 Jul 24 19:23 /dev/capture-isp-channel2
+crw-rw---- 1 root video 248, 20 Jul 24 19:23 /dev/capture-isp-channel20
+crw-rw---- 1 root video 248, 21 Jul 24 19:23 /dev/capture-isp-channel21
+crw-rw---- 1 root video 248, 22 Jul 24 19:23 /dev/capture-isp-channel22
+crw-rw---- 1 root video 248, 23 Jul 24 19:23 /dev/capture-isp-channel23
+crw-rw---- 1 root video 248, 24 Jul 24 19:23 /dev/capture-isp-channel24
+crw-rw---- 1 root video 248, 25 Jul 24 19:23 /dev/capture-isp-channel25
+crw-rw---- 1 root video 248, 26 Jul 24 19:23 /dev/capture-isp-channel26
+crw-rw---- 1 root video 248, 27 Jul 24 19:23 /dev/capture-isp-channel27
+crw-rw---- 1 root video 248, 28 Jul 24 19:23 /dev/capture-isp-channel28
+crw-rw---- 1 root video 248, 29 Jul 24 19:23 /dev/capture-isp-channel29
+crw-rw---- 1 root video 248,  3 Jul 24 19:23 /dev/capture-isp-channel3
+crw-rw---- 1 root video 248, 30 Jul 24 19:23 /dev/capture-isp-channel30
+crw-rw---- 1 root video 248, 31 Jul 24 19:23 /dev/capture-isp-channel31
+crw-rw---- 1 root video 248, 32 Jul 24 19:23 /dev/capture-isp-channel32
+crw-rw---- 1 root video 248, 33 Jul 24 19:23 /dev/capture-isp-channel33
+crw-rw---- 1 root video 248, 34 Jul 24 19:23 /dev/capture-isp-channel34
+crw-rw---- 1 root video 248, 35 Jul 24 19:23 /dev/capture-isp-channel35
+crw-rw---- 1 root video 248, 36 Jul 24 19:23 /dev/capture-isp-channel36
+crw-rw---- 1 root video 248, 37 Jul 24 19:23 /dev/capture-isp-channel37
+crw-rw---- 1 root video 248, 38 Jul 24 19:23 /dev/capture-isp-channel38
+crw-rw---- 1 root video 248, 39 Jul 24 19:23 /dev/capture-isp-channel39
+crw-rw---- 1 root video 248,  4 Jul 24 19:23 /dev/capture-isp-channel4
+crw-rw---- 1 root video 248, 40 Jul 24 19:23 /dev/capture-isp-channel40
+crw-rw---- 1 root video 248, 41 Jul 24 19:23 /dev/capture-isp-channel41
+crw-rw---- 1 root video 248, 42 Jul 24 19:23 /dev/capture-isp-channel42
+crw-rw---- 1 root video 248, 43 Jul 24 19:23 /dev/capture-isp-channel43
+crw-rw---- 1 root video 248, 44 Jul 24 19:23 /dev/capture-isp-channel44
+########## host1x / nvhost ##########
+13e10000.host1x
+13e10000.host1x:ctx0
+13e10000.host1x:ctx1
+13e10000.host1x:ctx2
+13e10000.host1x:ctx3
+13e10000.host1x:ctx4
+13e10000.host1x:ctx5
+13e10000.host1x:ctx6
+13e10000.host1x:ctx7
+13e10000.host1x:isp@14800000
+13e10000.host1x:isp-thi@14b00000
+13e10000.host1x:nvcsi@15a00000
+13e10000.host1x:vi-thi@15f00000
+15200000.display
+15200000.display-hub
+15340000.vic
+15c10000.vi
+bc00000.rtcpu
+external-connection:disp-state
+tegra-capture-vi
+--- syncpt ---
+########## tegra-capture-vi ##########
+total 0
+drwxr-xr-x   6 root root    0 Jul 24 19:23 .
+drwxr-xr-x 121 root root    0 Jul 24 19:23 ..
+drwxr-xr-x  38 root root    0 Jul 24 19:23 capture-vi-channel
+lrwxrwxrwx   1 root root    0 Jul 24 19:23 driver -> ../../../bus/platform/drivers/tegra-camrtc-capture-vi
+-rw-r--r--   1 root root 4096 Jul 25 02:20 driver_override
+drwxr-xr-x   3 root root    0 Jul 24 19:23 media0
+-r--r--r--   1 root root 4096 Jul 25 02:20 modalias
+lrwxrwxrwx   1 root root    0 Jul 25 02:20 of_node -> ../../../firmware/devicetree/base/tegra-capture-vi
+drwxr-xr-x   2 root root    0 Jul 25 02:20 power
+lrwxrwxrwx   1 root root    0 Jul 24 19:23 subsystem -> ../../../bus/platform
+-rw-r--r--   1 root root 4096 Jul 24 19:23 uevent
+drwxr-xr-x   5 root root    0 Jul 24 19:23 video4linux
+########## iommu groups ##########
+0 2600000.dma
+0 3100000.serial
+0 3110000.serial
+0 3160000.i2c
+0 3180000.i2c
+0 3190000.i2c
+0 31b0000.i2c
+0 31c0000.i2c
+0 31e0000.i2c
+0 3270000.spi
+0 c240000.i2c
+0 c250000.i2c
+1 3610000.xhci
+2 3550000.xudc
+3 3460000.sdhci
+4 bc00000.rtcpu
+5 c1a0000.aon
+6 0005:00:00.0
+6 0005:01:00.0
+6 141a0000.pcie
+7 13e10000.host1x
+8 13e10000.host1x:ctx0
+9 13e10000.host1x:ctx1
+10 13e10000.host1x:ctx2
+11 13e10000.host1x:ctx3
+12 13e10000.host1x:ctx4
+13 13e10000.host1x:ctx5
+14 13e10000.host1x:ctx6
+15 13e10000.host1x:ctx7
+16 15140000.nvdec1
+16 15340000.vic
+16 15380000.nvjpg
+16 15480000.nvdec
+16 154c0000.nvenc
+16 15a80000.nvenc1
+17 15500000.tsec
+18 15100000.tsecb
+19 13e10000.host1x:isp@14800000
+20 15c10000.vi
+21 16000000.pva0
+22 16800000.pva1
+23 15880000.nvdla0
+24 158c0000.nvdla1
+25 15200000.display
+26 2490000.ethernet
+27 15810000.se
+28 15820000.se
+29 15830000.se
+30 15840000.se
+31 3510000.hda
+32 sound
+########## modules ##########
+Module                  Size  Used by
+lzo_rle                16384  36
+lzo_compress           16384  1 lzo_rle
+zram                   32768  6
+snd_soc_tegra186_asrc    40960  1
+snd_soc_tegra210_ope    32768  1
+snd_soc_tegra210_iqc    16384  0
+snd_soc_tegra186_arad    28672  2 snd_soc_tegra186_asrc
+snd_soc_tegra186_dspk    20480  2
+snd_soc_tegra210_mvc    20480  2
+snd_soc_tegra210_afc    20480  6
+snd_soc_tegra210_dmic    20480  4
+snd_soc_tegra210_mixer    49152  1
+snd_soc_tegra210_adx    32768  4
+snd_soc_tegra210_amx    32768  4
+snd_soc_tegra210_i2s    24576  6
+snd_soc_tegra210_sfc    61440  4
+snd_soc_tegra210_admaif   131072  1
+snd_soc_tegra_pcm      16384  1 snd_soc_tegra210_admaif
+snd_soc_tegra_machine_driver    16384  0
+rtk_btusb              69632  0
+snd_soc_tegra_utils    28672  2 snd_soc_tegra210_admaif,snd_soc_tegra_machine_driver
+snd_soc_simple_card_utils    24576  1 snd_soc_tegra_utils
+snd_soc_tegra210_ahub  1273856  3 snd_soc_tegra210_ope,snd_soc_tegra210_sfc
+tegra210_adma          28672  4 snd_soc_tegra210_admaif
+bcm_gps_tty            16384  0
+snd_hda_codec_hdmi     61440  4
+snd_hda_tegra          16384  0
+snd_hda_codec         139264  2 snd_hda_codec_hdmi,snd_hda_tegra
+snd_hda_core           98304  3 snd_hda_codec_hdmi,snd_hda_codec,snd_hda_tegra
+nv_ov13b10             20480  0
+nv_ov7251              20480  0
+snd_soc_tas5805m       32768  1
+snd_soc_rt5680         61440  1
+nvgpu                2625536  18
+nvmap                 225280  61 nvgpu
+8821cu               2416640  0

@@ -1,0 +1,210 @@
+########## v4l2 formats (query only) ##########
+=== /dev/video0
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+	[0]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Discrete 640x480
+			Interval: Discrete 0.033s (30.000 fps)
+=== /dev/video1
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+	[0]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Discrete 640x480
+			Interval: Discrete 0.033s (30.000 fps)
+=== /dev/video2
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+	[0]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Discrete 4208x3120
+			Interval: Discrete 0.033s (30.000 fps)
+########## media graph ##########
+Media controller API version 5.10.216
+
+Media device information
+------------------------
+driver          tegra-camrtc-ca
+model           NVIDIA Tegra Video Input Device
+serial          
+bus info        
+hw revision     0x3
+driver version  5.10.216
+
+Device topology
+- entity 1: 13e10000.host1x:nvcsi@15a00000- (2 pads, 2 links)
+            type V4L2 subdev subtype Unknown flags 0
+            device node name /dev/v4l-subdev0
+	pad0: Sink
+		<- "ov7251 2-0061":0 [ENABLED]
+	pad1: Source
+		-> "vi-output, ov7251 2-0061":0 [ENABLED]
+
+- entity 4: 13e10000.host1x:nvcsi@15a00000- (2 pads, 2 links)
+            type V4L2 subdev subtype Unknown flags 0
+            device node name /dev/v4l-subdev1
+	pad0: Sink
+		<- "ov7251 2-0062":0 [ENABLED]
+	pad1: Source
+		-> "vi-output, ov7251 2-0062":0 [ENABLED]
+
+- entity 7: 13e10000.host1x:nvcsi@15a00000- (2 pads, 2 links)
+            type V4L2 subdev subtype Unknown flags 0
+            device node name /dev/v4l-subdev2
+	pad0: Sink
+		<- "ov13b10 2-0036":0 [ENABLED]
+	pad1: Source
+		-> "vi-output, ov13b10 2-0036":0 [ENABLED]
+
+- entity 10: ov7251 2-0061 (1 pad, 1 link)
+             type V4L2 subdev subtype Sensor flags 0
+             device node name /dev/v4l-subdev3
+	pad0: Source
+		[fmt:SBGGR10_1X10/640x480 field:none colorspace:srgb]
+		-> "13e10000.host1x:nvcsi@15a00000-":0 [ENABLED]
+
+- entity 12: vi-output, ov7251 2-0061 (1 pad, 1 link)
+             type Node subtype V4L flags 0
+             device node name /dev/video0
+	pad0: Sink
+		<- "13e10000.host1x:nvcsi@15a00000-":1 [ENABLED]
+
+- entity 28: ov7251 2-0062 (1 pad, 1 link)
+             type V4L2 subdev subtype Sensor flags 0
+             device node name /dev/v4l-subdev4
+	pad0: Source
+		[fmt:SBGGR10_1X10/640x480 field:none colorspace:srgb]
+		-> "13e10000.host1x:nvcsi@15a00000-":0 [ENABLED]
+
+- entity 30: vi-output, ov7251 2-0062 (1 pad, 1 link)
+             type Node subtype V4L flags 0
+             device node name /dev/video1
+	pad0: Sink
+		<- "13e10000.host1x:nvcsi@15a00000-":1 [ENABLED]
+
+- entity 40: ov13b10 2-0036 (1 pad, 1 link)
+             type V4L2 subdev subtype Sensor flags 0
+             device node name /dev/v4l-subdev5
+	pad0: Source
+		[fmt:SRGGB10_1X10/4208x3120 field:none colorspace:srgb]
+		-> "13e10000.host1x:nvcsi@15a00000-":0 [ENABLED]
+
+- entity 42: vi-output, ov13b10 2-0036 (1 pad, 1 link)
+             type Node subtype V4L flags 0
+             device node name /dev/video2
+	pad0: Sink
+		<- "13e10000.host1x:nvcsi@15a00000-":1 [ENABLED]
+
+########## capture-vi-channel sysfs ##########
+capture-vi-channel0
+capture-vi-channel1
+capture-vi-channel10
+capture-vi-channel11
+capture-vi-channel12
+capture-vi-channel13
+capture-vi-channel14
+capture-vi-channel15
+capture-vi-channel16
+capture-vi-channel17
+capture-vi-channel18
+capture-vi-channel19
+capture-vi-channel2
+capture-vi-channel20
+capture-vi-channel21
+capture-vi-channel22
+capture-vi-channel23
+capture-vi-channel24
+capture-vi-channel25
+capture-vi-channel26
+capture-vi-channel27
+capture-vi-channel28
+capture-vi-channel29
+capture-vi-channel3
+capture-vi-channel30
+capture-vi-channel31
+capture-vi-channel32
+capture-vi-channel33
+capture-vi-channel34
+capture-vi-channel35
+capture-vi-channel4
+capture-vi-channel5
+capture-vi-channel6
+capture-vi-channel7
+capture-vi-channel8
+capture-vi-channel9
+########## nvcsi/vi debugfs ##########
+10000000.iommu
+12000000.iommu
+15810000.se
+15820000.se
+15830000.se
+15840000.se
+17000000.gv11b
+17000000.gv11b_scaling
+3100000.serial
+3110000.serial
+3460000.sdhci
+aon
+asoc
+bdi
+block
+bluetooth
+bpmp
+camera-ov13b10_e
+camera-ov7251_a
+camera-ov7251_b
+camrtc
+clear_warn_once
+clk
+cvnas
+dc_common
+debug_enabled
+devfreq
+device_component
+devices_deferred
+dma_buf
+dmaengine
+dma_pools
+dri
+dynamic_debug
+energy_model
+extfrag
+fault_around_bytes
+gpio
+gpu.0
+hid
+########## camrtc ##########
+ast-cpu
+ast-dma
+coverage
+forced-reset-restore
+irqstat
+log-level
+memstat
+mods
+ping
+reboot
+rtos
+sm-ping
+test
+timeout
+version
+########## nvmap config ##########
+has-config
+Y
+16
+248192
+0
+########## interrupts (vi/isp/host1x/rce) ##########
+ 20:          0          0          0          0          0          0     GICv2 291 Level     be00000.rce-noc
+ 21:          0          0          0          0          0          0     GICv2 207 Level     be00000.rce-noc
+ 31:          0          0          0          0          0          0     GICv2 152 Level     3c00000.tegra-hsp
+ 50:          0          0          0          0          0          0     GICv2 238 Level     vic
+ 53:          0          0          0          0          0          0     GICv2 185 Level     15200000.display
+ 54:          0          0          0          0          0          0     GICv2 190 Level     15200000.display
+ 75:       6440          0          0          0          0          0     GICv2 165 Level     c150000.tegra-hsp
+ 79:     311014          0          0          0          0          0     GICv2 208 Level     3c00000.tegra-hsp
+ 87:         62          0          0          0          0          0     GICv2 214 Level     b950000.tegra-hsp
+264:          0          0          0          0          0          0      gpio  76 Edge      15200000.display
+266:          0          0          0          0          0          0      gpio  36 Edge      force-recovery

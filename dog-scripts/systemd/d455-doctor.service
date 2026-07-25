@@ -1,0 +1,11 @@
+[Unit]
+Description=D455 camera liveness doctor (CPU-activity probe, restart on 2 consecutive misses)
+Documentation=file:/usr/local/bin/d455-doctor.sh
+After=d455-camera.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/d455-doctor.sh
+# 脚本内部要 sleep 20 采样, 给足余量
+TimeoutStartSec=90
+Nice=10

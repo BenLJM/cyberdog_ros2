@@ -1,0 +1,301 @@
+diff -uNr a/nvidia/drivers/media/platform/tegra/camera/fusa-capture/capture-isp.c b/nvidia/drivers/media/platform/tegra/camera/fusa-capture/capture-isp.c
+--- a/nvidia/drivers/media/platform/tegra/camera/fusa-capture/capture-isp.c	2026-07-25 10:49:02
++++ b/nvidia/drivers/media/platform/tegra/camera/fusa-capture/capture-isp.c	2026-07-25 11:04:22
+@@ -64,6 +64,15 @@
+ 	uint32_t progress_status_buffer_depth;
+ 		/**< No. of process descriptors. */
+ 
++	uint32_t desc_mem;
++		/**<
++		 * NvRm handle of the descriptor ring buffer itself.  Only used
++		 * by the r32 relocation pass (CONFIG_TEGRA_CAPTURE_R32_ABI):
++		 * a reloc slot may point at a buffer that lives *inside* the
++		 * descriptor ring (e.g. ISP pushbuffer 2), in which case the
++		 * per-descriptor offset has to be added to the surface offset.
++		 */
++
+ 	struct mutex unpins_list_lock; /**< Lock for unpins_list */
+ 	struct capture_common_unpins *unpins_list;
+ 		/**< List of process request buffer unpins */
+@@ -570,6 +579,29 @@
+  *
+  * @returns	0 (success), neg. errno (failure)
+  */
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
++/*
++ * Static proof that the r32 ISP wire ABI is the one in effect.  Note that
++ * CAPTURE_CHANNEL_ISP_SETUP_REQ is 0x20 in BOTH r32 and r35 -- so a size
++ * mismatch here would NOT be rejected by the firmware, it would be accepted
++ * and mis-parsed.  That is exactly the failure mode that shows up as
++ * "arm-smmu ... Unhandled context fault", so assert the layout instead.
++ */
++static_assert(CAPTURE_CHANNEL_ISP_SETUP_REQ == 0x20U,
++	"r32-abi: CAPTURE_CHANNEL_ISP_SETUP_REQ must be 0x20");
++static_assert(sizeof(struct capture_channel_isp_config) == 168U,
++	"r32-abi: capture_channel_isp_config must be 168 bytes (r35 is 184)");
++static_assert(sizeof(struct isp_capture_descriptor) == 576U,
++	"r32-abi: isp_capture_descriptor must be 576 bytes (r35 is 768)");
++
++static int r32_isp_reloc_request_buffers_locked(
++		struct tegra_isp_channel *chan,
++		struct isp_desc_rec *ctx,
++		uint32_t buffer_index,
++		const struct capture_isp_reloc *relocs,
++		struct capture_common_unpins *request_unpins);
++#endif
++
+ static int isp_capture_program_prepare(
+ 	struct tegra_isp_channel *chan,
+ 	struct isp_program_req *req)
+@@ -641,12 +673,22 @@
+ 	request_offset = req->buffer_index *
+ 			capture->program_desc_ctx.request_size;
+ 
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
++	(void)meminfo;
++	(void)desc;
++	(void)request_offset;
++	err = r32_isp_reloc_request_buffers_locked(chan,
++		&capture->program_desc_ctx, req->buffer_index,
++		&req->isp_program_relocs,
++		&capture->program_desc_ctx.unpins_list[req->buffer_index]);
++#else
+ 	err = capture_common_pin_and_get_iova(chan->capture_data->buffer_ctx,
+ 		(uint32_t)(desc->isp_pb1_mem >> 32U), /* mem handle */
+ 		((uint32_t)desc->isp_pb1_mem) + request_offset, /* offset */
+ 		&meminfo->base_address,
+ 		&meminfo->size,
+ 		&capture->program_desc_ctx.unpins_list[req->buffer_index]);
++#endif
+ 
+ 	mutex_unlock(&capture->program_desc_ctx.unpins_list_lock);
+ 
+@@ -1064,6 +1106,7 @@
+ 	capture->capture_desc_ctx.request_size = setup->request_size;
+ 	capture->capture_desc_ctx.request_buf_size = setup->request_size *
+ 							setup->queue_depth;
++	capture->capture_desc_ctx.desc_mem = setup->mem;
+ 
+ 	/* allocate isp capture desc unpin list based on queue depth */
+ 	capture->capture_desc_ctx.unpins_list = vzalloc(
+@@ -1117,6 +1160,7 @@
+ 	capture->program_desc_ctx.request_buf_size =
+ 					setup->isp_program_request_size *
+ 						setup->isp_program_queue_depth;
++	capture->program_desc_ctx.desc_mem = setup->isp_program_mem;
+ 
+ 	/* allocate isp program unpin list based on queue depth */
+ 	capture->program_desc_ctx.unpins_list = vzalloc(
+@@ -1168,18 +1212,22 @@
+ 	config->request_queue_depth = setup->queue_depth;
+ 	config->request_size = setup->request_size;
+ 	config->requests = capture->capture_desc_ctx.requests.iova;
++#if !IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
+ 	config->requests_memoryinfo =
+ 		capture->capture_desc_ctx.requests_memoryinfo_iova;
+ 	config->request_memoryinfo_size =
+ 		sizeof(struct isp_capture_descriptor_memoryinfo);
++#endif
+ 
+ 	config->program_queue_depth = setup->isp_program_queue_depth;
+ 	config->program_size = setup->isp_program_request_size;
+ 	config->programs = capture->program_desc_ctx.requests.iova;
++#if !IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
+ 	config->programs_memoryinfo =
+ 		capture->program_desc_ctx.requests_memoryinfo_iova;
+ 	config->program_memoryinfo_size =
+ 		sizeof(struct memoryinfo_surface);
++#endif
+ 
+ 	config->progress_sp = capture->progress_sp;
+ 	config->stats_progress_sp = capture->stats_progress_sp;
+@@ -1209,6 +1257,16 @@
+ 
+ 	capture->channel_id = resp_msg->channel_isp_setup_resp.channel_id;
+ 
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
++	dev_info(chan->isp_dev,
++		"r32-abi: ISP channel setup accepted: hw_channel_id=%u req_depth=%u req_size=%u prog_depth=%u prog_size=%u\n",
++		capture->channel_id,
++		capture->capture_desc_ctx.queue_depth,
++		capture->capture_desc_ctx.request_size,
++		capture->program_desc_ctx.queue_depth,
++		capture->program_desc_ctx.request_size);
++#endif
++
+ 	err = tegra_capture_ivc_notify_chan_id(capture->channel_id,
+ 			transaction);
+ 	if (err < 0) {
+@@ -1525,7 +1583,148 @@
+ 	return 0;
+ }
+ 
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
+ /**
++ * @brief r32 per-frame memory model for ISP: in-place relocation.
++ *
++ * Mirror of the VI-side relocation pass (see capture-vi-channel.c), driven by
++ * the r32 struct capture_isp_reloc list that userspace supplies with every
++ * ISP process/program request.  r32 firmware reads IOVAs out of the process
++ * descriptor itself; it knows nothing about r35's side memoryinfo array.
++ *
++ * The one ISP-specific wrinkle: a reloc slot may point at a buffer that lives
++ * *inside* the descriptor ring (ISP pushbuffer 1 and 2 are appended to the
++ * program/process descriptors).  r32 detected that by comparing the embedded
++ * NvRm handle with the ring's own handle and adding the per-descriptor offset.
++ * We keep exactly that rule, using @ref isp_desc_rec.desc_mem recorded at
++ * channel setup.  It is the same arithmetic r35 hardcodes for isp_pb1_mem /
++ * isp_pb2_mem, just generalised over the reloc list.
++ *
++ * As on the VI side, the r32 dma_buf_kmap()/kunmap() page walk is replaced
++ * by the whole-buffer dma_buf_vmap() that capture_common_pin_memory() has
++ * already taken (ctx->requests.va), because dma_buf_kmap() no longer exists
++ * in Linux 5.10.
++ *
++ * @param[in]	chan		ISP channel context
++ * @param[in]	ctx		Descriptor-queue context (process or program)
++ * @param[in]	buffer_index	Descriptor slot
++ * @param[in]	relocs		r32 reloc list for this descriptor
++ * @param[out]	request_unpins	Unpin bookkeeping for this descriptor slot
++ *
++ * @returns	0 (success), neg. errno (failure)
++ */
++static int r32_isp_reloc_request_buffers_locked(
++		struct tegra_isp_channel *chan,
++		struct isp_desc_rec *ctx,
++		uint32_t buffer_index,
++		const struct capture_isp_reloc *relocs,
++		struct capture_common_unpins *request_unpins)
++{
++	struct isp_capture *capture = chan->capture_data;
++	uint32_t *reloc_relatives;
++	uint32_t request_offset = buffer_index * ctx->request_size;
++	size_t buf_size;
++	uint32_t i;
++	int err = 0;
++
++	if (ctx->requests.va == NULL || ctx->requests.buf == NULL) {
++		dev_err(chan->isp_dev, "%s: descriptor ring not mapped\n",
++			__func__);
++		return -EINVAL;
++	}
++
++	if (relocs->num_relocs == 0U ||
++		relocs->num_relocs > MAX_PIN_BUFFER_PER_REQUEST) {
++		dev_err(chan->isp_dev, "%s: bad reloc count %u\n", __func__,
++			relocs->num_relocs);
++		return -EINVAL;
++	}
++
++	buf_size = ctx->requests.buf->size;
++
++	reloc_relatives = kcalloc(relocs->num_relocs, sizeof(uint32_t),
++				GFP_KERNEL);
++	if (unlikely(reloc_relatives == NULL))
++		return -ENOMEM;
++
++	if (copy_from_user(reloc_relatives,
++			(const void __user *)(uintptr_t)relocs->reloc_relatives,
++			(size_t)relocs->num_relocs * sizeof(uint32_t)) != 0U) {
++		dev_err(chan->isp_dev, "%s: failed to copy reloc list\n",
++			__func__);
++		err = -EFAULT;
++		goto out;
++	}
++
++	for (i = 0U; i < relocs->num_relocs; i++) {
++		uint32_t reloc_offset = request_offset + reloc_relatives[i];
++		uint64_t *slot;
++		uint64_t surface_raw;
++		uint32_t target_offset;
++		uint32_t mem;
++		uint64_t target_iova = 0U;
++		uint64_t target_size = 0U;
++
++		if ((reloc_offset % sizeof(uint64_t)) != 0U ||
++			reloc_offset > (buf_size - sizeof(uint64_t))) {
++			dev_err(chan->isp_dev,
++				"%s: reloc %u offset %u out of bounds\n",
++				__func__, i, reloc_offset);
++			err = -EINVAL;
++			goto out;
++		}
++
++		slot = (uint64_t *)((uint8_t *)ctx->requests.va + reloc_offset);
++		surface_raw = READ_ONCE(*slot);
++
++		target_offset = (uint32_t)(surface_raw & 0xFFFFFFFFULL);
++		mem = (uint32_t)(surface_raw >> 32);
++
++		if (mem == 0U) {
++			dev_err(chan->isp_dev,
++				"%s: reloc %u has a NULL mem handle\n",
++				__func__, i);
++			err = -EINVAL;
++			goto out;
++		}
++
++		/* buffer embedded in the descriptor ring itself (pb1/pb2) */
++		if (mem == ctx->desc_mem)
++			target_offset += request_offset;
++
++		err = capture_common_pin_and_get_iova(capture->buffer_ctx, mem,
++				target_offset, &target_iova, &target_size,
++				request_unpins);
++		if (err < 0) {
++			dev_err(chan->isp_dev,
++				"%s: reloc %u pin of handle 0x%x failed\n",
++				__func__, i, mem);
++			goto out;
++		}
++
++		if (target_iova == 0U) {
++			dev_err(chan->isp_dev,
++				"%s: reloc %u resolved to a NULL iova\n",
++				__func__, i);
++			err = -EINVAL;
++			goto out;
++		}
++
++		WRITE_ONCE(*slot, target_iova);
++	}
++
++	/* make the patched descriptor visible to RCE */
++	dma_sync_single_range_for_device(capture->rtcpu_dev,
++			ctx->requests.iova, request_offset,
++			ctx->request_size, DMA_TO_DEVICE);
++
++out:
++	/* unpin cleanup on error is done by isp_capture_request_unpin() */
++	kfree(reloc_relatives);
++	return err;
++}
++#else
++/**
+  * Pin/map buffers and save iova boundaries into corresponding
+  * memoryinfo struct.
+  */
+@@ -1645,6 +1844,7 @@
+ 	/* Unpin cleanup is done in isp_capture_request_unpin() */
+ 	return err;
+ }
++#endif /* CONFIG_TEGRA_CAPTURE_R32_ABI */
+ 
+ int isp_capture_request(
+ 	struct tegra_isp_channel *chan,
+@@ -1724,8 +1924,15 @@
+ 		return -EBUSY;
+ 	}
+ 
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
++	err = r32_isp_reloc_request_buffers_locked(chan,
++		&capture->capture_desc_ctx, req->buffer_index,
++		&req->isp_relocs,
++		&capture->capture_desc_ctx.unpins_list[req->buffer_index]);
++#else
+ 	err = pin_isp_capture_request_buffers_locked(chan, req,
+ 		&capture->capture_desc_ctx.unpins_list[req->buffer_index]);
++#endif
+ 
+ 	mutex_unlock(&capture->capture_desc_ctx.unpins_list_lock);
+ 

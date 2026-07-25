@@ -1,0 +1,67 @@
+[Unit]
+Description=Intel RealSense D455 camera node (JP4 chroot, JP5 host)
+Documentation=file:/usr/local/bin/d455-camera.sh
+
+# 排序: 电源轨(net.sh 写 realsense_switch) 和栈都先起来
+After=jp5-cyberdog-net.service jp5-cyberdog-stack.service
+Wants=jp5-cyberdog-net.service
+
+# 陷阱#3 的解: 与栈"同生共死"。
+#   PartOf => 对栈的显式 stop/restart 会传播到本单元。
+#   于是 /home/mi/rs-poc-run.sh 和 /home/mi/factory-node-revive.sh 里现成的
+#   `systemctl stop jp5-cyberdog-stack.service` 会自动让出相机, 结尾的
+#   `systemctl start jp5-cyberdog-stack.service` 又靠下面的 WantedBy 把相机拉回来。
+#   **这两个脚本一行都不用改, 也不会 device-busy。**
+# 故意不用 BindsTo: 栈自身 Restart=on-failure 的内部重启不该连累相机(相机没必要重抓设备)。
+PartOf=jp5-cyberdog-stack.service
+
+# 陷阱#2 的解(限流): 15 分钟内最多 5 次启动, 超了就停在 failed, 不做每 8 秒
+# chroot+su+加载 202MB 库的永动机(那在 68°C 基线上是真热风险)。
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# 陷阱#1 的解: /mnt/jp4 的 dev / dev-pts / dev-shm / proc / sys / run-udev bind
+# 必须先到位, 否则 chroot 里既没有 /dev/bus/usb 也没有 libudev 枚举 -> "No device"。
+# After= 只是排序不是依赖, 所以这里显式跑一次(脚本幂等)。
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStart=/usr/local/bin/d455-camera.sh
+
+# 取流档位: depth_ir | stereo | full | depth_only
+# 影像 QoS: SYSTEM_DEFAULT(=reliable, 兼容 reliable 订阅者如 ov_msckf) / SENSOR_DATA(=best_effort)
+Environment=D455_PROFILE=depth_ir
+Environment=D455_IMG_QOS=SYSTEM_DEFAULT
+
+# 分辨率默认 424x240 —— 这是当前系统状态下**实测能满速投递**的档位(30.1 Hz)。
+# 848x480 的深度帧 814KB > net.core.rmem_max 212992B, 实测 10 秒只出 1 帧。
+# 想上 848x480: 先装 60-cyberdog-dds-sysctl.conf(把出厂 rmem 调优补回来) 再改这两行。
+Environment=D455_W=424
+Environment=D455_H=240
+
+# IMU 速率必须 pin 死: 不 pin 时节点会挑 gyro400/accel200, 这颗 D455 的 HID 通道起不来,
+# 直接报 "Motion Module failure / Hardware Error" 且 IMU 无数据。200/100 实测 199.8Hz。
+Environment=D455_GYRO_FPS=200.0
+Environment=D455_ACCEL_FPS=100.0
+
+Restart=on-failure
+RestartSec=20
+# 78 = 缺文件/配置错, 重试一万次也没用 -> 直接躺平, 等人修
+RestartPreventExitStatus=78
+
+# 尝试计数落在这里: systemd 自动重启时保留, 人为 stop/start 时清零
+RuntimeDirectory=d455-camera
+RuntimeDirectoryPreserve=restart
+
+# 让节点自己收到 SIGTERM, 干净关闭 USB 设备(不要 KillMode=mixed: 那样只有 su 收到信号)
+KillMode=control-group
+TimeoutStopSec=25
+
+# 相机永远让路给运动栈
+Nice=5
+CPUWeight=50
+
+[Install]
+# 装在栈的 .wants 下: 栈起 -> 相机起; 栈被 stop -> PartOf 把相机也带走
+WantedBy=jp5-cyberdog-stack.service
