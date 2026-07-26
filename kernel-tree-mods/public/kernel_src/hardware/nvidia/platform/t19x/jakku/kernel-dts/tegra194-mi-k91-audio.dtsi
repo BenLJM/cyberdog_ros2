@@ -13,6 +13,14 @@
  * Include from tegra194-p3668-0001-p2151-0000.dts, AFTER
  * common/tegra194-p2151-0000.dtsi (we override nodes it defines).
  *
+ * ⚠ 2026-07-26 (task F3): three NON-audio platform fixups used to live at the
+ * bottom of this file -- thermal-zones map3 deletion, adsp_audio disable and
+ * the clocks-init aonclk trim.  They now live in
+ *   tegra194-mi-k91-fixups.dtsi
+ * which the top-level dts includes IMMEDIATELY AFTER this file.  Do not move
+ * that include, and do not assume that reverting this file is safe on its own
+ * -- losing the map3 deletion silently reintroduces thermtrip power-off.
+ *
  * Card model (primary): "nvidia,tegra186-ape" structured card, bound by
  *   kernel-5.10/sound/soc/tegra/tegra_machine_driver.c (default JP5 stack,
  *   same one that drives the Xavier NX devkit).  The generic audio-graph
@@ -188,71 +196,4 @@
 
 &pvdd_amp_12v {
 	status = "disabled";
-};
-
-/* ------------------------------------------------------------------ */
-/* 2. Thermal-zone fixup for NX floorsweeping under legacy cboot.     */
-/* The factory (r32-era) cboot deletes cluster-3 CPUs (cpu@300/301)   */
-/* from the runtime DT on 6-core NX.  map3 in these zones references  */
-/* &cl3_0 which then dangles; r35 of-thermal fails the WHOLE zone     */
-/* ("failed to build thermal zone X: -2"), which in turn makes        */
-/* tegra-bpmp-thermal defer forever => no CPU/GPU thermal zones, and  */
-/* nvfancontrol dies.  Cluster 3 does not exist on NX, so the map is  */
-/* meaningless anyway — delete it from all four affected zones.       */
-/* ------------------------------------------------------------------ */
-/ {
-	thermal-zones {
-		CPU-therm {
-			cooling-maps {
-				/delete-node/ map3;
-			};
-		};
-		GPU-therm {
-			cooling-maps {
-				/delete-node/ map3;
-			};
-		};
-		AUX-therm {
-			cooling-maps {
-				/delete-node/ map3;
-			};
-		};
-		PMIC-Die {
-			cooling-maps {
-				/delete-node/ map3;
-			};
-		};
-	};
-};
-
-/* ------------------------------------------------------------------ */
-/* 3. ADSP audio links fixup.  The athena kernel does not build the   */
-/* ADSP audio driver, so the adsp_audio component never registers and */
-/* snd_soc_get_dai_name() makes the whole sound card defer forever.   */
-/* The machine driver skips links whose referenced DAI node is        */
-/* unavailable (of_dai_link_is_available), so disabling adsp_audio    */
-/* silently drops all 40 ADSP dai-links.  Offload/AEC paths are not   */
-/* needed for plain 6ch PCM capture / mono playback.                  */
-/* ------------------------------------------------------------------ */
-/ {
-	aconnect@2a41000 {
-		adsp_audio {
-			status = "disabled";
-		};
-	};
-};
-
-/* ------------------------------------------------------------------ */
-/* 4. clocks-init fixup.  Its first "disable" entry references the    */
-/* aonclk provider, which the legacy (r32) cboot deletes from the     */
-/* runtime DT on this board -> of_clk_get() index 0 defers forever    */
-/* and the two useful BPMP entries never get processed.  Keep only    */
-/* the BPMP clocks (ids 9 and 11).                                    */
-/* ------------------------------------------------------------------ */
-/ {
-	clocks-init {
-		disable {
-			clocks = <&bpmp 9 &bpmp 11>;
-		};
-	};
 };

@@ -1,0 +1,12 @@
+[Unit]
+Description=CyberDog GPS (BCM4775) node permissions for chroot stack
+After=systemd-udev-settle.service
+Before=jp5-cyberdog-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/cyberdog-gps-perm.sh
+
+[Install]
+WantedBy=multi-user.target

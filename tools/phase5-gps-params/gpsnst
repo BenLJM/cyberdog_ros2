@@ -1,0 +1,7 @@
+#!/bin/sh
+# CyberDog JP5 (2026-07-26): BCM4775 nstandby sysfs 路径垫片
+# 出厂 service_scene_detection 里硬编码的是 4.9 的 /sys/devices/bcm4775/nstandby,
+# 5.10 上真实路径是 /sys/devices/platform/bcm4775/nstandby。
+# sysfs 不允许用户态建符号链接/目录, 所以改成把二进制里的 shell 命令重定向到本脚本。
+# 用法: gpsnst 0 | gpsnst 1
+exec echo "$1" > /sys/devices/platform/bcm4775/nstandby

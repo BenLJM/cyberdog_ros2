@@ -391,26 +391,51 @@
 	i2c@31e0000 {
 		status = "okay";
 
+		/*
+		 * 2026-07-26: back touchpad enabled.  The 4.9 synaptics_dsx driver
+		 * has been forward-ported to 5.10 (drivers/input/touchscreen/
+		 * synaptics_dsx/, CONFIG_TOUCHSCREEN_SYNAPTICS_DSX*), so this node
+		 * finally has a driver to bind to.  Properties are restored to the
+		 * values the factory R32 board file (tegra194-mi-k91.dts) shipped
+		 * with -- in particular irq-gpio flags 0x2008 (IRQF_ONESHOT |
+		 * IRQF_TRIGGER_LOW), NOT the 0x2002 (edge-falling) that zbwu's
+		 * forward-port left behind.  The driver reads its IRQ flags from
+		 * the 3rd cell of synaptics,irq-gpio (see synaptics_dsx_i2c.c
+		 * parse_dt()); the "interrupts" property is decorative -- the IRQ
+		 * itself comes from gpio_to_irq(irq-gpio).
+		 * Level-low matters: the RMI4 F01 interrupt stays asserted until
+		 * the status register is read, so an edge trigger can wedge the
+		 * touchpad after a missed edge.
+		 */
 		synaptics_dsx@20 {
 			compatible = "synaptics,dsx-i2c";
 			reg = <0x20>;
-			status = "disabled";
+			status = "okay";
 			interrupt-parent = <&tegra_main_gpio>;
 			interrupts = <TEGRA194_MAIN_GPIO(Q, 3)  0x2002>;
 			synaptics,ub-i2c-addr = <0x2c>;
-			synaptics,irq-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(Q, 3) 0x2002>; // IRQF_ONESHOT|IRQF_TRIGGER_FALLING
+			synaptics,irq-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(Q, 3) 0x2008>; // IRQF_ONESHOT|IRQF_TRIGGER_LOW
 			synaptics,reset-gpio = <&gpio_expand2 7 0x00>;
 			synaptics,irq-on-state = <0>;
 			synaptics,power-delay-ms = <200>;
 			synaptics,reset-delay-ms = <200>;
 			synaptics,reset-on-state = <0>;
 			synaptics,reset-active-ms = <20>;
-			// uncomment and update line below as appropriate if there are 0D buttons
-			// synaptics,cap-button-codes = <102 158>;// use in debug, should be comment in final release!!!!
+			/*
+			 * 0D (capacitive) button codes.  The factory R32 board file
+			 * shipped this UNCOMMENTED.  It is not optional decoration:
+			 * synaptics_rmi4_f1a_button_map() returns -ENODEV (which
+			 * aborts the whole probe) if the RMI4 device exposes an F1A
+			 * function and bdata->cap_button_map->map is NULL.  If this
+			 * part has no F1A the property is simply parsed and never
+			 * used, so keeping it strictly dominates removing it.
+			 * 102 = KEY_HOME, 158 = KEY_BACK.
+			 */
+			synaptics,cap-button-codes = <102 158>;
 			// uncomment and update lines below as appropriate if there are virtual buttons
 			// synaptics,vir-button-codes = <102 100 900 100 60 158 300 900 100 60>;
 			// synaptics,max-y-for-2d = <800>;
-	};
+		};
 	};
 
 	bcm4775 {

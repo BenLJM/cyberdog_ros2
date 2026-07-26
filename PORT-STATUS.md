@@ -69,7 +69,7 @@ JP4 根文件系统在 `nvme0n1p1`，运行时挂在 `/mnt/jp4`。这条路线�
 | 双风扇 / 散热 | ✅ 兜住 | 5 温区注册、90.5°C 降频 + 96°C critical 已绑；但 `thermal_zone5` **mode=disabled** → 内核不动风扇，100% 靠用户态 `fanboy` |
 | CPU 功耗模式 | ✅ 已修 | 曾误停在 `MODE_10W_DESKTOP`(4核)，**已恢复出厂 `MODE_15W_6CORE`(pmode 2)**；⚠️ `/etc/nvpmodel.conf` 的 `DEFAULT` 仍是 5，rootfs 重刷会静默退回 |
 | 蓝牙 (Realtek hci0) | ⚠️ 退化 | hci0 UP RUNNING，但 JP4 的 `bluetooth_ros2.service` 在 JP5 无对应实现 |
-| D455 深度相机 | ⚠️ 退化 | 硬件在位（v4l2 实抓 Z16 成功），但**冷启动完全不起**，无自启 unit |
+| D455 深度相机 | ✅ | `d455-camera.service` 已部署+enabled，随栈自启（sidecar）。848x480@30 三路影像 + IMU 200Hz 实测满速，详见 0726 条目 |
 | GPS (BCM4775) | ⚠️ 退化 | 驱动点火、`nstandby=1`；出厂节点写死 4.9 sysfs 路径 + `/dev/ttyTHS0` 是 `root:dialout` 而节点跑在 `mi` 下 → **没出过数据** |
 | 电池 / BMS | ⏸️ 物理项 | **机主已物理拆除电池**，当前适配器供电（只有 `usb-charger`，无 battery 节点） |
 | AI 头顶相机（3 sensor） | ❌ 不通 | RCE 固件活(cmd=5)、IVC 通、nvcsi initialized、3 颗 subdev 全 bound、nvmap 手术已过 —— 但采集控制面 ABI 结构性分家 |
@@ -129,6 +129,48 @@ JP4 `/etc/sysctl.conf` 设 `net.core.rmem_max=26214000`（26MB），**移植时�
 后果：所有 ROS2/DDS 大消息过不去。实测 D455 848x480 深度帧 814KB → 10 秒只收到 1 帧；424x240（203KB）满速 30.1Hz——**阈值正好卡在 208KB**。
 两条独立的线（D455 取流、systemd 缺口审计）互相印证。极可能是 0722「rs_bridge 投递不出去」悬案的真凶。
 修复：`/etc/sysctl.d/99-cyberdog.conf`。
+**2026-07-26 追认**：确实是它。rmem 补齐后 848x480 当场满速（见下），0722 悬案结案。
+
+---
+
+# 2026-07-26 追加
+
+## ✅ D455 深度相机：冷启自启落地（`d455-camera.service`）
+JP4 出厂有 `rs-bridge.service`，JP5 一直没有对应实现 —— 相机每次都要人工拉起。现已补齐。
+
+**部署内容**（全部为新增文件，未改动任何既有 unit / 出厂 launch）：
+
+| 文件 | 位置 | 作用 |
+|---|---|---|
+| `d455-camera.service` | JP5 `/etc/systemd/system/` | 主 unit，`WantedBy` + `PartOf` = `jp5-cyberdog-stack.service` |
+| `d455-camera.sh` | JP5 `/usr/local/bin/` | 宿主侧启动器：chroot 兜底、电源轨、USB 等待、尝试计数 |
+| `d455-camera-inner.sh` | chroot `/home/mi/` | 直接 exec `/opt/lrs-wrapper` 包装器节点（不走 `ros2 run`） |
+| `d455-doctor.sh` + `.service`/`.timer` | JP5 | 每 5 分钟 CPU 活性判活，连续 2 次判死才重启 |
+| `d455-verify.sh` | JP5 `/usr/local/bin/` | 只读验收（rclpy 计数，不信 `ros2 topic hz`） |
+
+**实测（2026-07-26 03:27–03:46）**
+
+```
+depth  848x480 Z16  30.0 Hz      infra1 848x480 Y8  30.1 Hz
+infra2 848x480 Y8   30.0 Hz      imu                197.6 Hz
+节点 CPU ≈16% 单核    SoC 62.5–65°C（无变化）    10 分钟零重启、PID 未变
+```
+
+**三条被推翻/证实的旧判断**
+1. ~~"848x480 过不了 DDS"~~ —— 真凶是 `rmem_max`，补回 26MB 后当场满速。默认分辨率已从 424x240 提到出厂档位 **848x480**。
+2. ~~"独立 systemd unit 的 DDS 参与者投递不到栈内节点"~~（`CAMERA-VIO-HANDOFF-2026-07-22.md`）—— 实测本 unit 与栈**同图可见（31 节点）**，投递正常。同样是 `rmem_max` 背的锅。**结论：不需要塞进栈 launch。**
+3. ✅ 证实：IMU 速率必须 pin 成 gyro 200 / accel 100，否则节点自动挑 400/200 → `Motion Module failure`，IMU 无数据。
+
+**默认档位 = `full`（depth + infra1 + infra2）**，对齐出厂 `realsense2_camera/launch/high_performance.py`（848x480、三路全开）。
+出厂 VIO `ov_msckf/launch/ros2.launch.py` 的 remap 要的正是 `camera/infra1`、`camera/infra2`、`camera/imu` —— 只开 depth+infra1 的话 VIO 拿不到右目，所以默认给全。
+
+**与既有工作流的关系（实测过，不是推理）**
+`PartOf` + `WantedBy` 让相机成为栈的 sidecar：`systemctl stop jp5-cyberdog-stack` → 相机自动停、USB 设备释放；`start` → 相机自动回来。
+所以 `/home/mi/rs-poc-run.sh`、`/home/mi/factory-node-revive.sh`（都是"停栈→独占相机→起栈"）**一行都不用改，也不会 device-busy**。`jp5-stack-doctor` 重启栈时相机跟着重启，同样正确。
+
+**防呆**：`Restart=on-failure` + `RestartSec=20` + `StartLimitBurst=5/900s`（不做每几秒 chroot 加载 202MB 库的永动机）；`RestartPreventExitStatus=78`（缺文件类错误直接躺平等人）；`SuccessExitStatus=143`（正常停机不落 failed 态）；哨兵在 SoC ≥85°C 时拒绝动手。
+
+**回滚**：`sudo bash /tmp/d455-stage/bin/d455-deploy.sh uninstall` —— 删干净，栈与出厂文件全程未被碰过。
 
 ## 🔴 音频路由：我们自己把调试期的错误固化进了「金标准」（已修）
 `/etc/cyberdog-audio-golden.state` 里三个控件全部偏离 JP4 出厂值：

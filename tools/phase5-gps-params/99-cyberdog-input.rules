@@ -1,0 +1,8 @@
+# CyberDog JP5 (2026-07-26): input 设备跨 chroot 权限修正
+# 出厂 JP4 靠 `usermod -aG input mi` 解决; JP5 上宿主 input gid=101 而 chroot(JP4 rootfs)
+# input gid=107 —— chroot 内以 mi 启动的进程拿到的补充组是 107, 对不上宿主节点的 101,
+# 于是触摸/手柄/遥控的 event 设备永远打不开。
+# uid 是两侧唯一一致的不变量(mi=1000 两边相同), 所以按 owner 授权而不是按 group。
+SUBSYSTEM=="input", KERNEL=="event*", OWNER="mi", MODE="0660"
+SUBSYSTEM=="input", KERNEL=="mice",   OWNER="mi", MODE="0660"
+SUBSYSTEM=="input", KERNEL=="js*",    OWNER="mi", MODE="0660"

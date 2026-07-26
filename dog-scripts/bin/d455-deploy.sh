@@ -79,11 +79,18 @@ uninstall_it() {
 sysctl_it() {
   # 独立一步, 因为它是**全局内核参数**, 影响面比相机大, 值得单独决策。
   # 内容=把 JP4 出厂 /etc/sysctl.conf 的 rmem 调优补回 JP5 host(移植漏项)。
-  echo "== 安装 DDS 大消息 sysctl(解锁 848x480) =="
+  # 2026-07-26: 正常情况下**不需要跑这一步** —— /etc/sysctl.d/99-cyberdog.conf 已经做了。
+  CUR=$(cat /proc/sys/net/core/rmem_max)
+  if [ "$CUR" -ge 26214000 ]; then
+    echo "net.core.rmem_max 已经是 $CUR (>=26214000), 无需安装。"
+    grep -rl "rmem_max" /etc/sysctl.d/ 2>/dev/null | sed "s/^/  已由此文件提供: /"
+    echo "不安装 60-cyberdog-dds.conf, 避免同一参数两处定义。"
+    return 0
+  fi
+  echo "== rmem_max 只有 $CUR, 安装 DDS 大消息 sysctl(解锁 848x480) =="
   install -m 0644 "$STAGE/systemd/60-cyberdog-dds-sysctl.conf" /etc/sysctl.d/60-cyberdog-dds.conf
   sysctl --system >/dev/null
   echo "net.core.rmem_max = $(cat /proc/sys/net/core/rmem_max)"
-  echo "现在可以把 unit 的 D455_W/D455_H 改成 848/480 (systemctl edit d455-camera) 并复验。"
 }
 
 case "$ACTION" in

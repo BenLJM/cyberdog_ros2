@@ -30,15 +30,22 @@ ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
 ExecStart=/usr/local/bin/d455-camera.sh
 
 # 取流档位: depth_ir | stereo | full | depth_only
+#   full = depth + infra1 + infra2, 对齐出厂 high_performance.py 的启用组合
+#   (出厂 realsense2_camera/launch/high_performance.py: 848x480, depth+infra1+infra2 全开)
+#   出厂 VIO ov_msckf/launch/ros2.launch.py 的 remap 要的正是
+#     topic_camera0=camera/infra1/image_rect_raw, topic_camera1=camera/infra2/image_rect_raw, imu=camera/imu
+#   —— 只开 depth_ir 的话 VIO 拿不到右目, 所以默认给 full。
 # 影像 QoS: SYSTEM_DEFAULT(=reliable, 兼容 reliable 订阅者如 ov_msckf) / SENSOR_DATA(=best_effort)
-Environment=D455_PROFILE=depth_ir
+Environment=D455_PROFILE=full
 Environment=D455_IMG_QOS=SYSTEM_DEFAULT
 
-# 分辨率默认 424x240 —— 这是当前系统状态下**实测能满速投递**的档位(30.1 Hz)。
-# 848x480 的深度帧 814KB > net.core.rmem_max 212992B, 实测 10 秒只出 1 帧。
-# 想上 848x480: 先装 60-cyberdog-dds-sysctl.conf(把出厂 rmem 调优补回来) 再改这两行。
-Environment=D455_W=424
-Environment=D455_H=240
+# 2026-07-26 实测更新: 848x480 已解锁并满速。
+#   旧结论"848x480 过不了 DDS(10 秒 1 帧)"的真凶是 net.core.rmem_max 停在内核默认 212992B;
+#   0725 装了 /etc/sysctl.d/99-cyberdog.conf 把出厂值 26214000 补回来之后, 本轮实测:
+#     depth 30.0Hz / infra1 30.0Hz / infra2 30.0Hz / imu 198.8Hz, 节点仅占 ~16% 单核。
+#   => 分辨率对齐出厂 848x480。若 rmem 又被谁改回 208KB, 脚本会打 WARN 并且帧会掉光。
+Environment=D455_W=848
+Environment=D455_H=480
 
 # IMU 速率必须 pin 死: 不 pin 时节点会挑 gyro400/accel200, 这颗 D455 的 HID 通道起不来,
 # 直接报 "Motion Module failure / Hardware Error" 且 IMU 无数据。200/100 实测 199.8Hz。
@@ -49,6 +56,9 @@ Restart=on-failure
 RestartSec=20
 # 78 = 缺文件/配置错, 重试一万次也没用 -> 直接躺平, 等人修
 RestartPreventExitStatus=78
+# 143 = 128+SIGTERM。停/重启本单元(以及栈 stop 经 PartOf 传播下来)时 su+节点就是这么退的,
+# 不声明的话每次正常停机 unit 都会落到 failed 态, 既难看又会误导哨兵和人。
+SuccessExitStatus=143
 
 # 尝试计数落在这里: systemd 自动重启时保留, 人为 stop/start 时清零
 RuntimeDirectory=d455-camera

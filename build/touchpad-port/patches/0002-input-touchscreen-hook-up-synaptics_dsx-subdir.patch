@@ -1,0 +1,18 @@
+diff -uNr a/kernel/kernel-5.10/drivers/input/touchscreen/Kconfig b/kernel/kernel-5.10/drivers/input/touchscreen/Kconfig
+--- a/kernel/kernel-5.10/drivers/input/touchscreen/Kconfig	2026-07-26 11:36:46
++++ b/kernel/kernel-5.10/drivers/input/touchscreen/Kconfig	2026-07-26 11:36:46
+@@ -1335,4 +1335,6 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called zinitix.
+ 
++source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
++
+ endif
+diff -uNr a/kernel/kernel-5.10/drivers/input/touchscreen/Makefile b/kernel/kernel-5.10/drivers/input/touchscreen/Makefile
+--- a/kernel/kernel-5.10/drivers/input/touchscreen/Makefile	2026-07-26 11:36:46
++++ b/kernel/kernel-5.10/drivers/input/touchscreen/Makefile	2026-07-26 11:36:46
+@@ -112,3 +112,4 @@
+ obj-$(CONFIG_TOUCHSCREEN_RASPBERRYPI_FW)	+= raspberrypi-ts.o
+ obj-$(CONFIG_TOUCHSCREEN_IQS5XX)	+= iqs5xx.o
+ obj-$(CONFIG_TOUCHSCREEN_ZINITIX)	+= zinitix.o
++obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX)	+= synaptics_dsx/

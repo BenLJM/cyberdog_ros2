@@ -1,0 +1,4 @@
+# CyberDog JP5: GPS 串口给出厂节点(以 mi 运行)用。
+# 出厂 /etc/systemd/ros2.sh 做的是 chmod 777 + chown mi:mi /dev/ttyTHS0;
+# JP5 默认 root:dialout 0660 且 mi 不在 dialout -> service_scene_detection 打不开串口。
+SUBSYSTEM=="tty", KERNEL=="ttyTHS0", OWNER="mi", GROUP="mi", MODE="0666"

@@ -1,0 +1,87 @@
+--- a/kernel/nvidia/drivers/platform/tegra/rtcpu/device-group.c
++++ b/kernel/nvidia/drivers/platform/tegra/rtcpu/device-group.c
+@@ -138,3 +138,84 @@
+ 
+ 	return platform_device_get(grp->devices[index]);
+ }
++
++#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
++/*
++ * R32 camera-device power management, restored verbatim from
++ *   R32.7 kernel/nvidia/drivers/platform/tegra/rtcpu/device-group.c
++ *
++ * R35 kept the *declarations* in device-group.h but deleted the definitions,
++ * because the R35 RCE firmware powers the VE / ISPA partitions itself over
++ * BPMP.  The CyberDog runs the factory R32-era RCE firmware, which does not:
++ * it assumes the kernel has already powered NVCSI / VI / ISP before it
++ * touches their registers.  Without this, the first NVCSI access from the
++ * RCE faults the interconnect:
++ *
++ *   CPU:0, Error:rce-noc
++ *   Host read timeout at address 303cc      (= nvcsi@15a00000 + stream 4)
++ *   Camera RTCPU gone bad! restoring it immediately!!
++ *
++ * Called from tegra-camera-rtcpu.c (see 0003 patch), which walks
++ * nvidia,camera-devices = <&isp &vi &nvcsi> from the DT.
++ */
++int camrtc_device_group_busy(const struct camrtc_device_group *grp)
++{
++	int err = -EINVAL, index, idle;
++
++	if (!grp)
++		return 0;
++
++	if (IS_ERR(grp))
++		return err;
++
++	for (index = 0; index < grp->ndevices; index++) {
++		if (!grp->devices[index])
++			continue;
++
++		err = nvhost_module_busy(grp->devices[index]);
++		if (err < 0)
++			goto error;
++	}
++
++	return 0;
++
++error:
++	for (idle = 0; idle < index; idle++)
++		nvhost_module_idle(grp->devices[idle]);
++
++	return err;
++}
++EXPORT_SYMBOL(camrtc_device_group_busy);
++
++void camrtc_device_group_idle(const struct camrtc_device_group *grp)
++{
++	int index;
++
++	if (IS_ERR_OR_NULL(grp))
++		return;
++
++	for (index = 0; index < grp->ndevices; index++)
++		if (grp->devices[index])
++			nvhost_module_idle(grp->devices[index]);
++}
++EXPORT_SYMBOL(camrtc_device_group_idle);
++
++void camrtc_device_group_reset(const struct camrtc_device_group *grp)
++{
++	int index;
++
++	if (!grp)
++		return;
++
++	if (IS_ERR(grp))
++		return;
++
++	for (index = 0; index < grp->ndevices; index++) {
++		if (!grp->devices[index])
++			continue;
++
++		nvhost_module_reset(grp->devices[index], false);
++	}
++}
++EXPORT_SYMBOL(camrtc_device_group_reset);
++#endif /* CONFIG_TEGRA_CAPTURE_R32_ABI */

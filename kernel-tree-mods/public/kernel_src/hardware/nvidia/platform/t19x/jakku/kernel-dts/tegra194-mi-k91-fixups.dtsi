@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * CyberDog (Xiaomi mi-k91) *platform* fixups for the r32-cboot + r35-kernel
+ * hybrid boot path.  JetPack 5 / L4T r35.6.4 (kernel 5.10.216).
+ *
+ * ==========================================================================
+ *  WHY THIS FILE EXISTS  (2026-07-26, task F3 -- "H2 pathology" split)
+ * ==========================================================================
+ * These three fixups used to live at the bottom of
+ *   tegra194-mi-k91-audio.dtsi
+ * purely for historical reasons: they were discovered while debugging why the
+ * sound card would not register.  Only ONE of them (adsp_audio) is actually
+ * about audio.  The other two are not:
+ *
+ *   - the thermal-zones map3 deletion is what keeps the CPU/GPU thermal zones
+ *     alive.  Lose it and tegra-bpmp-thermal defers forever, nvfancontrol
+ *     dies, and the board SILENTLY runs into a thermtrip power-off under
+ *     sustained load (this is the 2026-07-23 "JP5 dies 30 min into full
+ *     load, zero logs" root cause).
+ *   - the clocks-init trim is what stops of_clk_get() deferring forever on
+ *     the aonclk provider that legacy cboot deletes.
+ *
+ * Keeping them inside an *audio* dtsi meant that reverting or replacing the
+ * audio DTS would silently reintroduce a thermal-shutdown bug.  They now live
+ * here, in a file whose name says what it is.
+ *
+ * MUST be included from tegra194-p3668-0001-p2151-0000.dts immediately after
+ * tegra194-mi-k91-audio.dtsi, i.e. at exactly the position these blocks
+ * previously occupied in the preprocessed token stream, so the resulting DTB
+ * is bit-for-bit identical (modulo nvidia,dtbbuildtime).
+ *
+ * Common root cause of all three: this board boots an r32-era cboot which
+ * hands the r35 kernel a runtime DT with nodes deleted (cluster-3 CPUs,
+ * aonclk) that the r35 DTS still references.
+ */
+
+/* ------------------------------------------------------------------ */
+/* 1. Thermal-zone fixup for NX floorsweeping under legacy cboot.      */
+/* The factory (r32-era) cboot deletes cluster-3 CPUs (cpu@300/301)    */
+/* from the runtime DT on 6-core NX.  map3 in these zones references   */
+/* &cl3_0 which then dangles; r35 of-thermal fails the WHOLE zone      */
+/* ("failed to build thermal zone X: -2"), which in turn makes         */
+/* tegra-bpmp-thermal defer forever => no CPU/GPU thermal zones, and   */
+/* nvfancontrol dies.  Cluster 3 does not exist on NX, so the map is   */
+/* meaningless anyway -- delete it from all four affected zones.       */
+/* ⚠ DEPLOY GATE: the built DTB must contain ZERO occurrences of map3. */
+/* ------------------------------------------------------------------ */
+/ {
+	thermal-zones {
+		CPU-therm {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+		GPU-therm {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+		AUX-therm {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+		PMIC-Die {
+			cooling-maps {
+				/delete-node/ map3;
+			};
+		};
+	};
+};
+
+/* ------------------------------------------------------------------ */
+/* 2. ADSP audio links fixup.  The athena kernel does not build the    */
+/* ADSP audio driver, so the adsp_audio component never registers and  */
+/* snd_soc_get_dai_name() makes the whole sound card defer forever.    */
+/* The machine driver skips links whose referenced DAI node is         */
+/* unavailable (of_dai_link_is_available), so disabling adsp_audio     */
+/* silently drops all 40 ADSP dai-links.  Offload/AEC paths are not    */
+/* needed for plain 6ch PCM capture / mono playback.                   */
+/* ⚠ DEPLOY GATE: adsp_audio must be status = "disabled" in the DTB.   */
+/* ------------------------------------------------------------------ */
+/ {
+	aconnect@2a41000 {
+		adsp_audio {
+			status = "disabled";
+		};
+	};
+};
+
+/* ------------------------------------------------------------------ */
+/* 3. clocks-init fixup.  Its first "disable" entry references the     */
+/* aonclk provider, which the legacy (r32) cboot deletes from the      */
+/* runtime DT on this board -> of_clk_get() index 0 defers forever     */
+/* and the two useful BPMP entries never get processed.  Keep only     */
+/* the BPMP clocks (ids 9 and 11).                                     */
+/* ⚠ DEPLOY GATE: clocks-init/disable must be exactly <&bpmp 9 &bpmp   */
+/* 11> -- no aonclk phandle.                                           */
+/* ------------------------------------------------------------------ */
+/ {
+	clocks-init {
+		disable {
+			clocks = <&bpmp 9 &bpmp 11>;
+		};
+	};
+};

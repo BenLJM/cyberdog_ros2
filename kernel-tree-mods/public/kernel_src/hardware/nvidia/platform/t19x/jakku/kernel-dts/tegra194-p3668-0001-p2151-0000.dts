@@ -28,7 +28,24 @@
 /* CyberDog mi-k91 audio card (rt5680 6-mic + tas5805m amp, tegra-alt t186ref) */
 #include "tegra194-mi-k91-audio.dtsi"
 
+/* CyberDog mi-k91 platform fixups for the r32-cboot + r35-kernel hybrid boot:
+ * thermal-zones map3 deletion (the thermtrip power-off guard), adsp_audio
+ * disable, clocks-init aonclk trim.  Split out of tegra194-mi-k91-audio.dtsi
+ * on 2026-07-26 (task F3) so that reverting/replacing the audio DTS can no
+ * longer silently reintroduce the thermal shutdown.
+ * MUST stay immediately after the audio include -- that is exactly where
+ * these blocks used to sit, and keeping the position keeps the built DTB
+ * bit-identical to the pre-split one. */
+#include "tegra194-mi-k91-fixups.dtsi"
+
 /* RCE camera RTCPU: force legacy shared-mailbox (SM5) HSP so the R35 kernel can
  * talk to the factory R32-era RCE firmware in QSPI. Pairs with the command-layer
  * driver patch. MUST be after tegra194-camera.dtsi (SoC) is included. */
 #include "tegra194-mi-k91-rtcpu-legacy.dtsi"
+
+/* Restore the R32 camera power/clock/reset topology (VE + ISPA power domains,
+ * nvcsilp CIL clock, NVCSI/VI/ISP resets) that R35 deleted. Without it NVCSI
+ * sits powergated and the R32 RCE firmware dies with
+ *   rce-noc: Host read timeout at address 303cc  (nvcsi 0x15a00000 + stream 4)
+ * MUST be after the SoC dtsi chain so &nvcsi / &vi / &vi_thi / &isp exist. */
+#include "tegra194-mi-k91-camera-power.dtsi"

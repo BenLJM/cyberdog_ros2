@@ -1,0 +1,12 @@
+[Unit]
+Description=CyberDog 出厂 ros2.sh 残余系统初始化(GPS串口/nstandby/regulator/input组 权限)
+After=jp5-cyberdog-net.service local-fs.target
+Before=jp5-cyberdog-stack.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/jp5-factory-sysinit.sh
+
+[Install]
+WantedBy=multi-user.target

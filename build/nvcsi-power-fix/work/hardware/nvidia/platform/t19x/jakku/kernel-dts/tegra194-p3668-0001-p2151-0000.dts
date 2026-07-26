@@ -1,0 +1,41 @@
+/*
+ * Top level DTS file for CVM:P3668-0001 and CVB:P3509-0000.
+ *
+ * Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
+
+/dts-v1/;
+#include "common/tegra194-p3668-common.dtsi"
+#include "common/tegra194-p2151-0000.dtsi"
+
+/ {
+	nvidia,dtsfilename = "p3668-0001-p2151-0000.dts";
+	nvidia,dtbbuildtime = __DATE__, __TIME__;
+
+	model = "Xiaomi Cyberdog";
+	compatible = "nvidia,p2151-0000+p3668-0001", "nvidia,tegra194";
+};
+
+/* CyberDog mi-k91 audio card (rt5680 6-mic + tas5805m amp, tegra-alt t186ref) */
+#include "tegra194-mi-k91-audio.dtsi"
+
+/* RCE camera RTCPU: force legacy shared-mailbox (SM5) HSP so the R35 kernel can
+ * talk to the factory R32-era RCE firmware in QSPI. Pairs with the command-layer
+ * driver patch. MUST be after tegra194-camera.dtsi (SoC) is included. */
+#include "tegra194-mi-k91-rtcpu-legacy.dtsi"
+
+/* Restore the R32 camera power/clock/reset topology (VE + ISPA power domains,
+ * nvcsilp CIL clock, NVCSI/VI/ISP resets) that R35 deleted. Without it NVCSI
+ * sits powergated and the R32 RCE firmware dies with
+ *   rce-noc: Host read timeout at address 303cc  (nvcsi 0x15a00000 + stream 4)
+ * MUST be after the SoC dtsi chain so &nvcsi / &vi / &vi_thi / &isp exist. */
+#include "tegra194-mi-k91-camera-power.dtsi"

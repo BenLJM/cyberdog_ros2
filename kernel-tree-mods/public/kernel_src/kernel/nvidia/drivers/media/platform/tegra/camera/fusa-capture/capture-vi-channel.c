@@ -449,6 +449,150 @@ static int vi_channel_release(
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
+/**
+ * @brief r32 per-frame memory model: in-place relocation.
+ *
+ * r32 firmware does not read a side "memoryinfo" table -- it reads the IOVAs
+ * straight out of the capture descriptor.  Userspace writes
+ * {u32 offset, u32 nvmap-handle} pairs into the descriptor and hands the KMD
+ * a list of byte offsets (relative to the start of its descriptor) at which
+ * those pairs live; the KMD pins each handle and overwrites the 64-bit slot
+ * with the resulting IOVA + offset.  That is the whole contract.
+ *
+ * Differences from the verbatim r32 implementation
+ * (r32 .../camera/capture_common.c :: capture_common_request_pin_and_reloc),
+ * and why:
+ *
+ *  - r32 mapped the descriptor page-by-page with dma_buf_kmap()/kunmap().
+ *    Those functions were deleted from the kernel in v5.6, so they do not
+ *    exist in 5.10.216.  We instead use the whole-buffer mapping that r35's
+ *    capture_common_pin_memory() already established
+ *    (capture->requests.va = dma_buf_vmap(), see capture-common.c), and index
+ *    it directly.  Same bytes, one mapping instead of N.
+ *  - r32 cast the mapping to (void __iomem *) and used __raw_readq/writeq.
+ *    A dma_buf vmap is ordinary kernel memory, not MMIO, so we use plain
+ *    aligned accesses.
+ *  - Pinning goes through r35's refcounted buffer table
+ *    (capture_common_pin_and_get_iova) instead of r32's raw
+ *    capture_common_pin_memory, so that the existing
+ *    vi_capture_request_unpin() teardown path stays correct and unchanged.
+ *
+ * Note this still depends on nvmap's HANDLE_AS_FD compat (a raw r32 nvmap
+ * handle is fed to dma_buf_get()); that surgery must stay in place.
+ *
+ * @param[in]	chan		VI channel context
+ * @param[in]	req		Capture request (buffer_index, num_relocs,
+ *				reloc_relatives user pointer)
+ * @param[out]	request_unpins	Unpin bookkeeping for this descriptor slot
+ *
+ * @returns	0 (success), neg. errno (failure)
+ */
+static int r32_reloc_vi_capture_request_buffers_locked(
+		struct tegra_vi_channel *chan,
+		struct vi_capture_req *req,
+		struct capture_common_unpins *request_unpins)
+{
+	struct vi_capture *capture = chan->capture_data;
+	uint32_t *reloc_relatives;
+	uint32_t request_offset = req->buffer_index * capture->request_size;
+	size_t buf_size;
+	uint32_t i;
+	int err = 0;
+
+	if (capture->requests.va == NULL || capture->requests.buf == NULL) {
+		dev_err(chan->dev, "%s: request buffer not mapped\n", __func__);
+		return -EINVAL;
+	}
+
+	if (req->num_relocs > MAX_PIN_BUFFER_PER_REQUEST) {
+		dev_err(chan->dev, "%s: too many relocs (%u > %u)\n", __func__,
+			req->num_relocs, MAX_PIN_BUFFER_PER_REQUEST);
+		return -EINVAL;
+	}
+
+	buf_size = capture->requests.buf->size;
+
+	reloc_relatives = kcalloc(req->num_relocs, sizeof(uint32_t),
+				GFP_KERNEL);
+	if (unlikely(reloc_relatives == NULL))
+		return -ENOMEM;
+
+	if (copy_from_user(reloc_relatives,
+			(const void __user *)(uintptr_t)req->reloc_relatives,
+			(size_t)req->num_relocs * sizeof(uint32_t)) != 0U) {
+		dev_err(chan->dev, "%s: failed to copy reloc list\n", __func__);
+		err = -EFAULT;
+		goto out;
+	}
+
+	for (i = 0U; i < req->num_relocs; i++) {
+		uint32_t reloc_offset = request_offset + reloc_relatives[i];
+		uint64_t *slot;
+		uint64_t surface_raw;
+		uint32_t target_offset;
+		uint32_t mem;
+		uint64_t target_iova = 0U;
+		uint64_t target_size = 0U;
+
+		if ((reloc_offset % sizeof(uint64_t)) != 0U ||
+			reloc_offset > (buf_size - sizeof(uint64_t))) {
+			dev_err(chan->dev,
+				"%s: reloc %u offset %u out of bounds\n",
+				__func__, i, reloc_offset);
+			err = -EINVAL;
+			goto out;
+		}
+
+		slot = (uint64_t *)((uint8_t *)capture->requests.va +
+					reloc_offset);
+		surface_raw = READ_ONCE(*slot);
+
+		/* low 32 bits: byte offset into the surface */
+		target_offset = (uint32_t)(surface_raw & 0xFFFFFFFFULL);
+		/* high 32 bits: nvmap memory handle */
+		mem = (uint32_t)(surface_raw >> 32);
+
+		if (mem == 0U) {
+			dev_err(chan->dev,
+				"%s: reloc %u has a NULL mem handle\n",
+				__func__, i);
+			err = -EINVAL;
+			goto out;
+		}
+
+		err = capture_common_pin_and_get_iova(capture->buf_ctx, mem,
+				target_offset, &target_iova, &target_size,
+				request_unpins);
+		if (err < 0) {
+			dev_err(chan->dev,
+				"%s: reloc %u pin of handle 0x%x failed\n",
+				__func__, i, mem);
+			goto out;
+		}
+
+		if (target_iova == 0U) {
+			dev_err(chan->dev,
+				"%s: reloc %u resolved to a NULL iova\n",
+				__func__, i);
+			err = -EINVAL;
+			goto out;
+		}
+
+		WRITE_ONCE(*slot, target_iova);
+	}
+
+	/* make the patched descriptor visible to RCE */
+	dma_sync_single_range_for_device(capture->rtcpu_dev,
+			capture->requests.iova, request_offset,
+			capture->request_size, DMA_TO_DEVICE);
+
+out:
+	/* unpin cleanup on error is done by vi_capture_request_unpin() */
+	kfree(reloc_relatives);
+	return err;
+}
+#else
 /**
  * Pin/map buffers and save iova boundaries into corresponding
  * memoryinfo struct.
@@ -499,6 +643,7 @@ fail:
 	/* Unpin cleanup is done in vi_capture_request_unpin() */
 	return err;
 }
+#endif /* CONFIG_TEGRA_CAPTURE_R32_ABI */
 
 /**
  * @brief Process an IOCTL call on a VI channel character device.
@@ -715,8 +860,13 @@ static long vi_channel_ioctl(
 			mutex_unlock(&capture->unpins_list_lock);
 			return -EBUSY;
 		}
+#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
+		err = r32_reloc_vi_capture_request_buffers_locked(chan, &req,
+				request_unpins);
+#else
 		err = pin_vi_capture_request_buffers_locked(chan, &req,
 				request_unpins);
+#endif
 
 		mutex_unlock(&capture->unpins_list_lock);
 

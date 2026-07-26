@@ -65,11 +65,11 @@ echo "$N" > "$STATE_DIR/attempt"
 RESET=false
 [ "$N" -ge 2 ] && RESET=true
 
-PROFILE="${D455_PROFILE:-depth_ir}"
+PROFILE="${D455_PROFILE:-full}"
 IMG_QOS="${D455_IMG_QOS:-SYSTEM_DEFAULT}"
 NS="${D455_NS:-}"
-W="${D455_W:-424}"
-H="${D455_H:-240}"
+W="${D455_W:-848}"
+H="${D455_H:-480}"
 GF="${D455_GYRO_FPS:-200.0}"
 AF="${D455_ACCEL_FPS:-100.0}"
 

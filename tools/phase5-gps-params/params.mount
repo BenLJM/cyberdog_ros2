@@ -1,0 +1,15 @@
+[Unit]
+Description=CyberDog factory /params partition (eMMC p12)
+Documentation=man:systemd.mount(5)
+DefaultDependencies=no
+After=local-fs-pre.target
+Before=local-fs.target
+
+[Mount]
+What=/dev/disk/by-partlabel/params
+Where=/params
+Type=ext4
+Options=defaults,nofail,x-systemd.device-timeout=10
+
+[Install]
+WantedBy=local-fs.target

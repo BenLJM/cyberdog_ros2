@@ -1,0 +1,56 @@
+diff -uN pristine/synaptics_dsx_fw_update.c ported/synaptics_dsx_fw_update.c
+--- pristine/synaptics_dsx_fw_update.c	2026-07-26 11:25:15
++++ ported/synaptics_dsx_fw_update.c	2026-07-26 11:36:01
+@@ -3275,6 +3275,7 @@
+ 		retval = fwu_write_f34_command(CMD_ERASE_UTILITY_PARAMETER);
+ 		if (retval < 0)
+ 			return retval;
++		fallthrough;
+ 	default:
+ 		dev_err(rmi4_data->pdev->dev.parent,
+ 				"%s: Invalid config area\n",
+diff -uN pristine/synaptics_dsx_i2c.c ported/synaptics_dsx_i2c.c
+--- pristine/synaptics_dsx_i2c.c	2026-07-26 11:25:15
++++ ported/synaptics_dsx_i2c.c	2026-07-26 11:36:01
+@@ -348,10 +348,17 @@
+ 	unsigned int remaining_length = length;
+ 	struct i2c_client *i2c = to_i2c_client(rmi4_data->pdev->dev.parent);
+ 	struct i2c_adapter *adap = i2c->adapter;
+-	struct i2c_msg msg[rd_msgs + 1];
++	struct i2c_msg *msg = NULL;
+ 
+ 	mutex_lock(&rmi4_data->rmi4_io_ctrl_mutex);
+ 
++	/* 5.10 builds with -Werror=vla; the 4.9 original used a VLA here. */
++	msg = kmalloc_array(rd_msgs + 1, sizeof(*msg), GFP_KERNEL);
++	if (!msg) {
++		retval = -ENOMEM;
++		goto exit;
++	}
++
+ 	retval = synaptics_rmi4_i2c_set_page(rmi4_data, addr);
+ 	if (retval != PAGE_SELECT_LEN) {
+ 		retval = -EIO;
+@@ -429,6 +436,8 @@
+ 	retval = length;
+ 
+ exit:
++	kfree(msg);
++
+ 	mutex_unlock(&rmi4_data->rmi4_io_ctrl_mutex);
+ 
+ 	return retval;
+diff -uN pristine/synaptics_dsx_rmi_dev.c ported/synaptics_dsx_rmi_dev.c
+--- pristine/synaptics_dsx_rmi_dev.c	2026-07-26 11:25:15
++++ ported/synaptics_dsx_rmi_dev.c	2026-07-26 11:36:01
+@@ -101,8 +101,8 @@
+ 	struct device dev;
+ 	struct synaptics_rmi4_data *rmi4_data;
+ 	struct kobject *sysfs_dir;
+-	struct siginfo interrupt_signal;
+-	struct siginfo terminate_signal;
++	struct kernel_siginfo interrupt_signal;
++	struct kernel_siginfo terminate_signal;
+ 	void *data;
+ 	bool concurrent;
+ };

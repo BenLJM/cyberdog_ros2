@@ -1,0 +1,22 @@
+[Unit]
+Description=CyberDog nginx (chroot 出厂 nginx: RTMP :1935 + 相册 HTTP :8083)
+After=network.target jp5-cyberdog-stack.service
+PartOf=jp5-cyberdog-stack.service
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=forking
+PIDFile=/mnt/jp4/usr/local/nginx/logs/nginx.pid
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStart=/usr/local/bin/jp5-nginx.sh
+ExecStop=/usr/local/bin/jp5-nginx-stop.sh
+ExecReload=/usr/sbin/chroot /mnt/jp4 /usr/local/nginx/sbin/nginx -s reload
+Restart=on-failure
+RestartSec=10
+
+[Install]
+# PartOf 只传播 stop/kill,不会在栈重新起来时把本服务拉回来 ——
+# 2026-07-26 实测: D455 那一路 restart 了栈, nginx 与 GATT 被静默停掉且再没起来。
+# 加一条 WantedBy=jp5-cyberdog-stack.service, 让 systemd 在启动栈时一并拉起本服务。
+WantedBy=multi-user.target jp5-cyberdog-stack.service

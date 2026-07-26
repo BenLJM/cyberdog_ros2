@@ -1,0 +1,94 @@
+source "drivers/media/platform/tegra/mipical/Kconfig"
+
+config VIDEO_CAMERA
+	tristate "generic camera device support"
+	depends on I2C && ARCH_TEGRA
+	select REGMAP_I2C
+	help
+	  This is a driver for generic camera devices
+	  for use with the tegra isp.
+
+config TEGRA_CAPTURE_R32_ABI
+	bool "Speak the L4T r32 (JetPack 4) RCE capture firmware ABI"
+	depends on TEGRA_CAMERA_RTCPU
+	default n
+	help
+	  Select this when the RCE camera firmware on the board is the L4T r32
+	  (JetPack 4) build and cannot be reflashed -- e.g. the Xiaomi CyberDog,
+	  whose RCE firmware lives in eMMC boot0.
+
+	  The camera RTCPU capture ABI changed incompatibly between r32 and r35:
+	  CAPTURE_CHANNEL_SETUP_REQ moved 0x10 -> 0x1E (r35 renamed 0x10 to
+	  CAPTURE_CONTROL_RESERVED_10), struct capture_channel_config grew
+	  216 -> 272 bytes, struct capture_descriptor shrank 704 -> 384 bytes,
+	  and the per-frame memory model changed from "kernel relocates the
+	  IOVAs in place inside the descriptor" (r32) to "kernel publishes a
+	  side buffer-table/memoryinfo array" (r35).
+
+	  With this option the whole kernel build uses the r32 camrtc headers
+	  and the fusa-capture driver performs the r32 in-place relocation pass,
+	  so kernel, userspace and firmware all speak r32.
+
+	  Saying N gives the stock, unmodified NVIDIA r35 behaviour.
+
+	  If unsure, say N.
+
+config VIDEO_TEGRA_VI
+	depends on TEGRA_GRHOST
+	depends on VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API && OF
+	select VIDEOBUF2_DMA_CONTIG
+	select V4L2_FWNODE
+	tristate "Tegra video input host1x client driver"
+	default y
+	help
+	  Driver for the Tegra video input hardware based on
+	  media controller framework and interact with host1x
+	  apis to support both user space as well as kernel
+	  programming of VI hardware registers
+	  To compile this driver as a module, choose M here:
+	  the module will be called nvhost-vi.
+
+config VIDEO_TEGRA_VI_TPG
+	depends on VIDEO_TEGRA_VI
+	# The r35 TPG driver programs the "next generation" NVCSI TPG
+	# (union nvcsi_tpg_config.tpg_ng), which does not exist in the r32
+	# camera firmware ABI at all -- there is no such union member and no
+	# such firmware feature.  Building it against the r32 headers is not
+	# possible, and running it would push a malformed
+	# CAPTURE_CSI_STREAM_TPG_SET_CONFIG_REQ at the r32 RCE.  This is a
+	# test-pattern-only driver; disabling it costs no real-sensor
+	# functionality.
+	depends on !TEGRA_CAPTURE_R32_ABI
+	tristate "Tegra video input test pattern generator driver"
+	default m
+	help
+	  Driver for the Tegra video input test pattern generator
+	  driver is based on media controller framework and interact
+	  with host1x apis to support both user space as well as kernel
+	  programming of VI hardware registers to generate predefined
+	  test patterns.
+	  To compile this driver as a module, choose M here:
+	  the module will be called nvhost-vi-tpg.
+
+config VIDEO_CAMERA_SKT
+	depends on VIDEO_CAMERA && OF
+	tristate "Tegra camera sensor kernel tests"
+	default m
+	help
+	  Enables the Tegra camera sensor kernel tests.
+
+config VIDEO_ISC
+	tristate "ISC(Image Sensor Control) device support"
+	depends on I2C && ARCH_TEGRA
+	help
+	  This is a driver for the ISC
+	  for controlling power, interrupt and registering
+	  i2c clients related to image sensor.
+
+config VIDEO_CDI
+	tristate "CDI(Camera Device Interface) device support"
+	depends on I2C && ARCH_TEGRA
+	help
+	  This is a driver for the CDI
+	  for controlling power, interrupt and registering
+	  i2c clients related to image sensor.

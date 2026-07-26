@@ -13,11 +13,11 @@
 #      - 消除 ament 在"出厂包 vs 包装器"之间选错的可能
 #
 #  环境变量(由外层传入, 都有默认值):
-#    D455_PROFILE        depth_ir(默认) | stereo | full | depth_only
+#    D455_PROFILE        full(默认, =depth+infra1+infra2) | depth_ir | stereo | depth_only
 #    D455_INITIAL_RESET  true/false —— 第 2 次及以后的启动尝试才 true(见外层)
 #    D455_NS             ROS 命名空间前缀, 空则按出厂算法从 DT 序列号推导
 #    D455_IMG_QOS        SYSTEM_DEFAULT(默认, =reliable) | SENSOR_DATA(=best_effort)
-#    D455_W / D455_H     影像分辨率, 默认 424x240 —— **别随手改成 848x480**, 先读下面
+#    D455_W / D455_H     影像分辨率, 默认 848x480(=出厂档位, 2026-07-26 实测满速)
 #
 #  ─── 2026-07-25 实测钉死的两颗雷(以前从没被记录过) ───────────────────────────
 #  雷 A: IMU 速率必须显式 pin 成 gyro=200 / accel=100。
@@ -28,16 +28,23 @@
 #        -> IMU 直接没数。pin 成 200/100 后实测 /imu = 199.8 Hz, 零告警。
 #        (200/100 正是 rs_poc imu 模式用的 librealsense 默认档, 已两次独立验证)
 #
-#  雷 B: 848x480 的影像**过不了 DDS**, 424x240 能。
-#        JP5 host 的 net.core.rmem_max = 212992 B(内核默认)。而
-#          848x480 Z16 = 814080 B  >> 208KB  -> 实测 10 秒只收到 1 帧
-#          424x240 Z16 = 203520 B  <  208KB  -> 实测 30.1 Hz 满速
+#  雷 B: (2026-07-26 已解除) 848x480 的影像曾经**过不了 DDS**, 只有 424x240 能。
+#        真凶不是相机也不是 DDS, 是 JP5 host 的 net.core.rmem_max 停在内核默认 212992 B:
+#          848x480 Z16 = 814080 B  >> 208KB  -> 当时实测 10 秒只收到 1 帧
+#          424x240 Z16 = 203520 B  <  208KB  -> 当时实测 30.1 Hz 满速
 #        JP4 出厂 rootfs 的 /etc/sysctl.conf 第 78/79 行本来就写着
 #          net.core.rmem_max=26214000 / net.core.rmem_default=26214000
 #        —— 但 chroot 不跑 systemd-sysctl, JP5 host 自己也没有这两行, 于是这条
-#        出厂调优在移植中**整条丢了**。这是一个纯粹的迁移漏项, 不是相机的问题。
-#        想上 848x480: 先装 dog-scripts/systemd/60-cyberdog-dds-sysctl.conf 并
-#        `sysctl --system`, 再把 D455_W/D455_H 改成 848/480 复验。
+#        出厂调优在移植中**整条丢了**。纯迁移漏项。
+#        0725 已由 /etc/sysctl.d/99-cyberdog.conf 补回 26214000。
+#        2026-07-26 复测(rmem=26214000, profile=full):
+#          depth 848x480 = 30.0Hz / infra1 = 30.0Hz / infra2 = 30.0Hz / imu = 198.8Hz
+#          节点 CPU ~16% 单核, SoC 温度无变化(64.5°C)。
+#        => 默认已改成 848x480。下面的 RMEM 自检仍然保留: 如果哪天 rmem 又被谁改回
+#           208KB, 它会当场 WARN, 免得再花一天去怀疑相机。
+#        顺带作废一条旧判断: "独立 systemd unit 起的 DDS 参与者投递不到栈内节点"
+#        (CAMERA-VIO-HANDOFF-2026-07-22.md)。本轮实测本 unit 与栈同图可见(31 节点),
+#        投递正常 —— 当年那个"投递之谜"同样是 rmem_max 这一条。
 # =============================================================================
 # 注意: 这里**故意不写 `set -u`**。ROS2 Foxy 的 setup.bash / colcon 生成的
 # local_setup.bash 会读一堆未定义变量(AMENT_TRACE_SETUP_FILES / COLCON_TRACE ...),
@@ -64,11 +71,11 @@ source /opt/ros2/cyberdog/setup.bash
 # shellcheck disable=SC1091
 source /opt/lrs-wrapper/local_setup.bash
 
-PROFILE="${D455_PROFILE:-depth_ir}"
+PROFILE="${D455_PROFILE:-full}"
 RESET="${D455_INITIAL_RESET:-false}"
 IMG_QOS="${D455_IMG_QOS:-SYSTEM_DEFAULT}"
-W="${D455_W:-424}"          # 见雷 B: 改大之前先修 net.core.rmem_max
-H="${D455_H:-240}"
+W="${D455_W:-848}"          # 见雷 B: 依赖 net.core.rmem_max=26214000
+H="${D455_H:-480}"
 GYRO_FPS="${D455_GYRO_FPS:-200.0}"   # 见雷 A: 别改成 400
 ACCEL_FPS="${D455_ACCEL_FPS:-100.0}" # 见雷 A: 别改成 200
 
@@ -86,10 +93,10 @@ fi
 # 注意红外与发射器的取舍: 开了 depth 就开了 IR 点阵投射器, infra1 上会有散斑,
 #   纯视觉 VIO 用 infra1 时应改用 stereo 档(不开 depth) 或另行关发射器。
 case "$PROFILE" in
-  depth_ir)   EN_DEPTH=true;  EN_IR1=true;  EN_IR2=false ;;  # 默认: 出厂 on_dog 的等价组合
+  depth_ir)   EN_DEPTH=true;  EN_IR1=true;  EN_IR2=false ;;  # 省一路右目(不跑 VIO 时够用)
   depth_only) EN_DEPTH=true;  EN_IR1=false; EN_IR2=false ;;
   stereo)     EN_DEPTH=false; EN_IR1=true;  EN_IR2=true  ;;  # 立体 VIO(Y8I 单流拆包)
-  full)       EN_DEPTH=true;  EN_IR1=true;  EN_IR2=true  ;;
+  full)       EN_DEPTH=true;  EN_IR1=true;  EN_IR2=true  ;;  # 默认: 对齐出厂 high_performance.py
   *) echo "[d455-inner] FATAL unknown D455_PROFILE=$PROFILE" >&2; exit 78 ;;
 esac
 

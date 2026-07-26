@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * CyberDog (Xiaomi mi-k91) — restore the **R32 camera power/clock/reset
+ * topology** that R35 deleted, so the factory R32-era RCE firmware finds
+ * NVCSI / VI / ISP alive when it programs them.
+ *
+ * ------------------------------------------------------------------------
+ * WHY (root cause of "rce-noc: Host read timeout at address 303cc")
+ * ------------------------------------------------------------------------
+ * 0x15a303cc = nvcsi@15a00000 + 0x303cc.
+ *   NVCSI PHY/brick stride is 0x10000 (nvcsi-t194.c PHY_OFFSET, and the
+ *   nvcsi prod-settings table in DT: 0x11018 / 0x21018 / 0x31018 / 0x41018).
+ *   csi5_registers.h: CSI5_TEGRA_CSI_STREAM_4_BASE = 0x30000.
+ *   => 0x303cc lives in the CSI **brick C / stream 4** window
+ *      (block +0x000..+0x3ff is the even-stream register page; the CIL_A
+ *      interrupt page starts at +0x400, CIL config at +0x1000).
+ *   The AI head camera (ov13b10) is wired to port-index = <4>  (live DT:
+ *   nvcsi@15a00000/channel@2/ports/port@0/endpoint@4/port-index = 4).
+ *   So the RCE died on the very first register touch of *our* camera's brick.
+ *
+ * A NOC "Host read timeout" is not a bad value — it means the target never
+ * answered: the block is powergated / unclocked / held in reset.
+ *
+ * Live evidence on the dog (JP5, read-only):
+ *   /sys/kernel/debug/pm_genpd/pm_genpd_summary
+ *       ve      off-0        <-- and ZERO devices attached to it
+ *       ispa    off-0        <-- and ZERO devices attached to it
+ *   /sys/kernel/debug/clk/clk_summary
+ *       nvcsi     enable_cnt 0  prepare_cnt 0   314 MHz
+ *       nvcsilp   enable_cnt 0  prepare_cnt 0   204 MHz
+ *
+ * Reason: R35's tegra194-soc-base.dtsi strips power-domains / resets /
+ * nvcsilp from nvcsi, vi, vi-thi and isp, because the **R35** RCE firmware
+ * powers those partitions itself over BPMP.  R32's firmware does NOT — in
+ * R32 the kernel did it (tegra-camera-rtcpu.c runtime_resume ->
+ * camrtc_device_group_busy() -> nvhost_module_busy(isp/vi/nvcsi)).
+ * We run the R32 firmware, so we must restore the R32 contract.
+ *
+ *   R32 nvcsi:  reg + power-domains VE + resets NVCSI + clocks nvcsi,nvcsilp
+ *   R35 nvcsi:  clocks nvcsi.  That is all.
+ *
+ * This dtsi restores the power/clock/reset properties only.  It deliberately
+ * does NOT add back `reg` to nvcsi/isp: adding reg renames the platform
+ * device (13e10000.host1x:nvcsi@15a00000 -> 15a00000.nvcsi) and is only
+ * needed for the *second* stage of the port (kernel-side prod settings +
+ * MIPI calibration, see NOTES.md §Stage 2).
+ *
+ * Pairs with the kernel patches
+ *   0002-rtcpu-device-group-restore-busy-idle-reset.patch
+ *   0003-rtcpu-power-camera-devices-for-r32-firmware.patch
+ *   0004-t194-nvcsi-vi-r32-clocks-keepalive.patch
+ * all gated on CONFIG_TEGRA_CAPTURE_R32_ABI.
+ *
+ * Include from tegra194-p3668-0001-p2151-0000.dts AFTER the SoC dtsi chain,
+ * so &nvcsi / &vi / &vi_thi / &isp exist.
+ */
+
+#include <dt-bindings/soc/tegra194-powergate.h>
+#include <dt-bindings/reset/tegra194-reset.h>
+#include <dt-bindings/clock/tegra194-clock.h>
+
+/*
+ * NVCSI — the block the RCE timed out on.
+ *
+ * VE partition + both clocks (nvcsi 400 MHz data path, nvcsilp 204 MHz CIL
+ * low-power path) + the NVCSI reset, exactly as R32's soc-base had them.
+ */
+&nvcsi {
+	power-domains = <&bpmp TEGRA194_POWER_DOMAIN_VE>;
+	resets = <&bpmp_resets TEGRA194_RESET_NVCSI>;
+	clocks = <&bpmp_clks TEGRA194_CLK_NVCSI>,
+		 <&bpmp_clks TEGRA194_CLK_NVCSILP>;
+	clock-names = "nvcsi", "nvcsilp";
+};
+
+/*
+ * VI — same VE partition.  R32 also hung nvcsi/nvcsilp off the VI node so
+ * that powering VI implies powering the CSI datapath; keep that, it is the
+ * ordering the R32 firmware was validated against.
+ */
+&vi {
+	power-domains = <&bpmp TEGRA194_POWER_DOMAIN_VE>;
+	resets = <&bpmp_resets TEGRA194_RESET_VI>,
+		 <&bpmp_resets TEGRA194_RESET_TSCTNVI>;
+	reset-names = "vi", "tsctnvi";
+	clocks = <&bpmp_clks TEGRA194_CLK_VI>,
+		 <&bpmp_clks TEGRA194_CLK_VI_CONST>,
+		 <&bpmp_clks TEGRA194_CLK_NVCSI>,
+		 <&bpmp_clks TEGRA194_CLK_NVCSILP>;
+	clock-names = "vi", "vi-const", "nvcsi", "nvcsilp";
+};
+
+/* VI-THI (VI host1x client) — VE partition, VI clocks. */
+&vi_thi {
+	power-domains = <&bpmp TEGRA194_POWER_DOMAIN_VE>;
+	clocks = <&bpmp_clks TEGRA194_CLK_VI>,
+		 <&bpmp_clks TEGRA194_CLK_VI_CONST>;
+	clock-names = "vi", "vi-const";
+};
+
+/*
+ * ISP — ISPA partition.  "isp capture setup failed" in the same crash burst
+ * has the same shape: ispa is off-0 with no devices attached.
+ */
+&isp {
+	power-domains = <&bpmp TEGRA194_POWER_DOMAIN_ISPA>;
+	resets = <&bpmp_resets TEGRA194_RESET_ISP>;
+	reset-names = "isp";
+};

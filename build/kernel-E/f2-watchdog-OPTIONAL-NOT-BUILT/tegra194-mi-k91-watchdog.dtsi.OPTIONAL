@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * ============================ NOT BUILT ============================
+ * DRAFT ONLY.  This file is intentionally NOT named *.dtsi so that no
+ * #include can pick it up by accident, and it is NOT included from
+ * tegra194-p3668-0001-p2151-0000.dts.
+ *
+ * Read build/kernel-E/f2-watchdog-OPTIONAL-NOT-BUILT/README.md before
+ * doing anything with it.  Short version: enabling this arms the Tegra
+ * watchdog AT PROBE TIME (nvidia,enable-on-init), the final expiry is a
+ * system POR (which very likely wipes the ramoops black box), and the
+ * first userspace open of /dev/watchdog permanently disables the kernel's
+ * own petting IRQ (CONFIG_WATCHDOG_NOWAYOUT=y).
+ *
+ * Deploy ALONE, on top of an otherwise known-good kernel + DTB, and only
+ * after F1 (ramoops) has been proven to work.
+ * ===================================================================
+ *
+ * Tegra WDT0 / TMR7, timeout 120 s, expiry-count 5.
+ * Feeder in this configuration = the kernel's own threaded IRQ handler
+ * (tegra_wdt_t18x_isr -> __tegra_wdt_t18x_ping).  Do NOT additionally set
+ * systemd RuntimeWatchdogSec until this has been stable for days.
+ *
+ * To use: drop the ".OPTIONAL" suffix and add, as the LAST include in
+ * tegra194-p3668-0001-p2151-0000.dts:
+ *     #include "tegra194-mi-k91-watchdog.dtsi"
+ */
+
+&tegra_wdt {
+	status = "okay";
+};

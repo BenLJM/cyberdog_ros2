@@ -1,0 +1,20 @@
+[Unit]
+Description=CyberDog 蓝牙 GATT 服务(chroot 跑出厂 bluetooth gattserver)
+After=bluetooth.service jp5-cyberdog-stack.service
+Requires=bluetooth.service
+PartOf=jp5-cyberdog-stack.service
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=idle
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStart=/usr/local/bin/jp5-bluetooth-gatt.sh
+Restart=on-failure
+RestartSec=15
+
+[Install]
+# PartOf 只传播 stop/kill,不会在栈重新起来时把本服务拉回来 ——
+# 2026-07-26 实测: D455 那一路 restart 了栈, nginx 与 GATT 被静默停掉且再没起来。
+# 加一条 WantedBy=jp5-cyberdog-stack.service, 让 systemd 在启动栈时一并拉起本服务。
+WantedBy=multi-user.target jp5-cyberdog-stack.service
