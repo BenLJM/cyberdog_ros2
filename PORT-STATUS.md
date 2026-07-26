@@ -232,3 +232,33 @@ argus:  Error IoctlFailed → Failed to create CameraProvider → 断言失败
 电池塌陷导致断电后，因下载口插着 USB 线，重新上电进了 **RCM（USB ID 变 `0955:7e19` APX，串口消失）**。
 恢复：插好适配器 → **拔掉 USB 线** → 长按电源到灯全灭 → 开机。
 本次恢复后 `PMC reset source: SYS_RESET_N`（真硬件复位），**全家桶全自动恢复、0 failed 单元** —— 这是"零人工干预"约束的一次有分量验证。
+
+## 🔵 蓝牙 GATT 打通（2026-07-26）
+**唯一阻塞是 chroot 内缺 `/run/dbus` bind** —— 出厂 `gattserver` 通过 D-Bus 跟宿主 bluetoothd 通信（`org.bluez` 的 `GattManager1`/`LEAdvertisingManager1`）。
+补进 `jp5-chroot-prep.sh` 即通，顺带修掉 chroot 内 pulseaudio 反复刷的 "Failed to connect to system bus"。
+
+新增 `jp5-bluetooth-gatt.{sh,service}`（宿主 unit 包装出厂 gattserver），**已设开机自启**。
+验证：`get psn=P21511820GR00177ZM` / `BLE_STATUS_ADV` / `GATT application registered` / `Advertisement registered`。
+
+**⚠️ 踩坑**：systemd 不带 `HOME`，而 ROS2 的 `rcl_logging_spdlog` 要用它展开 `~/.ros/log`，缺了直接
+`rcutils_expand_user failed` → `Failed to initialize logging` → 退出。出厂 unit 是 `User=root`（systemd 自动给 HOME），
+chroot 包装会丢掉，**必须显式 `export HOME=/root`**。这个只有真 `systemctl start` 才暴露，交互式试跑看不出来。
+
+## 💡 LED 子系统实测通过（2026-07-26）
+`led_server` 节点实时处理 LED 命令（`start process led cmd` / `command=28` / `command=9`），
+**机主目视确认头部橙灯在闪**（低电量指示，与电池 0% 吻合）。
+→ 整条链路 **ROS2 节点 → led_server → CAN → MCU → 灯珠** 全部验证，
+元器件表里最后一个"只靠推理挂着"的项已结案。
+
+## 自启服务清单（全部 enabled，2026-07-26 实测）
+| 服务 | 作用 |
+|---|---|
+| `fanboy` | 温控守护 v2（反极性风扇曲线 + 92°C CPU 频率封顶 + 82°C 迟滞恢复） |
+| `deadman` | 用户态黑匣子 |
+| `audio-init` | 声卡金标准回放（v2 如实上报 + `Before=stack`） |
+| `cyberdog-health` | 长稳基线采集 |
+| `cyberdog-timekeeper` | 时钟单调地板（只向前推） |
+| `jp5-cyberdog-stack` | chroot 出厂 ROS2 栈 |
+| `jp5-cyberdog-net` | 内网/CAN |
+| `jp5-boot-ok` | 清启动尝试计数器（oneshot，inactive 属正常） |
+| `jp5-bluetooth-gatt` | 蓝牙 GATT（手机 App 通道） |
