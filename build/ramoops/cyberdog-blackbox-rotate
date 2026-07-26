@@ -1,0 +1,38 @@
+#!/bin/sh
+# systemd 245 把 pstore 记录写成扁平文件名,下次开机会被覆盖 -> 转存成带时间戳的目录。
+#
+# ⚠ 关键: /etc/systemd/pstore.conf 必须 Unlink=no。
+#   ramoops_pstore_erase(PSTORE_TYPE_CONSOLE) 会 persistent_ram_zap(cprz),
+#   也就是"删 pstore 文件"会把【当前这次开机】已经攒下的 console 环形区一起抹掉。
+#   systemd-pstore 在 ~17s 运行,开着 Unlink 就等于每次开机都丢掉 [0..17s] ——
+#   而那正是驱动 probe 挂死的窗口,黑匣子最该看见的地方。
+# 崩溃记录(dmesg-ramoops-*)则要在归档后删掉,因为 erase 只 zap 对应的 dump prz,
+# 不影响 console prz;不删的话每次开机都会重复归档同一条崩溃。
+set -u
+SRC=/var/lib/systemd/pstore
+DST=/var/log/cyberdog-blackbox
+KEEP=30
+
+[ -d "$SRC" ] || exit 0
+set -- "$SRC"/*-ramoops-*
+[ -e "$1" ] || exit 0
+
+tag=""
+for f in "$@"; do
+    case "$(basename "$f")" in dmesg-ramoops-*) tag="-CRASH"; break;; esac
+done
+
+d="$DST/$(date +%Y%m%d-%H%M%S)$tag"
+mkdir -p "$d" || exit 1
+n=$#
+mv "$@" "$d/" || exit 1
+echo "cyberdog-blackbox: 转存 $n 条记录 -> $d"
+
+if [ -n "$tag" ]; then
+    echo "cyberdog-blackbox: ⚠ 上次启动是内核崩溃,详见 $d"
+    # 消费掉崩溃记录:只 zap dump prz,console 环形区不受影响
+    rm -f /sys/fs/pstore/dmesg-ramoops-* 2>/dev/null
+fi
+
+ls -1dt "$DST"/*/ 2>/dev/null | tail -n +$((KEEP+1)) | xargs -r rm -rf
+exit 0

@@ -74,11 +74,11 @@ JP4 根文件系统在 `nvme0n1p1`，运行时挂在 `/mnt/jp4`。这条路线�
 | 电池 / BMS | ⏸️ 物理项 | **机主已物理拆除电池**，当前适配器供电（只有 `usb-charger`，无 battery 节点） |
 | AI 头顶相机（3 sensor） | ❌ 不通 | RCE 固件活(cmd=5)、IVC 通、nvcsi initialized、3 颗 subdev 全 bound、nvmap 手术已过 —— 但采集控制面 ABI 结构性分家 |
 | 超声 ×4 / ToF / 光线 / LED | ❓ 未验证 | CAN 总线证实是活的（TX 有 ACK、TEC=0、MCU 回 timesync）。静默是出厂设计（`enable_count=0`，需上层发 ENABLE service）。**端到端从未验证过** |
-| 背部触摸板 | ❌ 不通 | DT disabled + **5.10 内核里根本没有 `synaptics_dsx` 驱动**。修 = 一次 4.9→5.10 驱动移植 |
+| 背部触摸板 | ✅ 已通 | 驱动 4.9→5.10 移植(3 文件 56 行)+ DT 使能；`event0=synaptics_dsx`，出厂 `touch_publisher` 节点已 activate。⏸️ 物理触摸未由人验证 |
 | 系统时钟 | ❌ 不通 | 停在 2000-01-01（双根因，见下） |
 | swap | ❌ 无 | 内核没编 `CONFIG_ZRAM`，`nvzramconfig` failed |
 | 硬件看门狗 | ❌ 禁用 | DT 里禁着，"挂死后自愈"零路径 |
-| pstore / ramoops | ❌ 不通 | DT carveout 对不上，硬断电/panic 拿不到内核侧黑匣子 |
+| pstore / ramoops | ✅ 已通 | 纯 extlinux cmdline 零内核零 DTB 改动；**每次开机完整 console 日志(从 `[0.000000]` 到最后一行)自动落盘归档**，见下节。⚠️ 只覆盖热复位，硬断电 DRAM 掉电无解 |
 | OP-TEE | ❌ 不通（可接受） | R32 引导器混血，本来就不可用 |
 
 ---
@@ -304,3 +304,76 @@ chroot 包装会丢掉，**必须显式 `export HOME=/root`**。这个只有真 
 | `jp5-cyberdog-net` | 内网/CAN |
 | `jp5-boot-ok` | 清启动尝试计数器（oneshot，inactive 属正常） |
 | `jp5-bluetooth-gatt` | 蓝牙 GATT（手机 App 通道） |
+
+---
+
+## 🗳️ ramoops 黑匣子（2026-07-26 落地并端到端验证）
+
+**零内核改动、零 DTB 改动** —— 只在 eMMC p1 的 `/boot/extlinux/extlinux.conf` 的 `LABEL jp5` 的 `APPEND` 尾部加一串模块参数。备份 `extlinux.conf.pre-ramoops`。
+
+```
+ramoops.mem_address=0xf0800000 ramoops.mem_size=0x200000 ramoops.record_size=0x10000 \
+ramoops.console_size=0x80000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 ramoops.max_reason=3
+```
+
+### 为什么原来 probe -22
+DT 的 `reserved-memory/ramoops_carveout` 是**动态保留**(只有 `size`/`alignment`/`alloc-ranges`，没有 `reg`)。
+R35 换成上游 `compatible="ramoops"` 的 `ramoops_parse_dt()` **要求 `reg`** → `-EINVAL`。
+绕法：ramoops 是 **builtin**，`ramoops_register_dummy()` 在 `mem_size!=0` 时用模块参数造一个 dummy platform device，
+`platform_data` 非空就整个跳过 DT 解析。DT 那个设备随后 probe 会打一句 `already initialized`，无害。
+
+### 地址是怎么锁死的（三重独立证据，别再靠猜）
+| 证据 | 值 |
+|---|---|
+| 引导器交给内核的 `/memory` 节点 | `0xac200000‑0xf09fffff` |
+| 内核 `memblock.memory` 实际 | `0xac200000‑0xf07fffff` |
+| **内核自己挖掉的差值** | **`0xf0800000‑0xf09fffff` = 正好 2 MiB** |
+
+- 大小与 `ramoops_carveout` 的 `size=<0 0x200000>` **精确相符**
+- 位置与 memblock **自顶向下**分配器的预测**精确相符**（`alloc-ranges` 上限 4 GiB）
+- DT 里**唯一**一个非零的 `no-map` 动态保留就是 `ramoops_carveout`
+- `of_reserved_mem` 对 `no-map` 走 `memblock_remove()`，所以它表现为**真空洞**而不是带 flag 的区段
+
+⚠️ **`0xac000000` 那个洞也是 2 MiB，但它是引导器的**（`/memory` 节点里本来就没有它）。
+用它会写进引导器 carveout —— `request_mem_region` 不会拦（没人注册 iomem），会**静默写坏**。
+
+### 🔴 最关键的坑：`Unlink=yes` 会抹掉当前这次开机的日志
+`ramoops_pstore_erase(PSTORE_TYPE_CONSOLE)` → `persistent_ram_zap(cprz)`。
+也就是**删 pstore 文件会 zap 掉【正在用的】console 环形区**。
+`systemd-pstore` 默认 `Unlink=yes` 且在 **~17s** 运行 → 每次开机都把 `[0..17s]` 抹干净，
+**而那正是驱动 probe 挂死的窗口，黑匣子最该看见的地方**。
+
+实测铁证：
+| | |
+|---|---|
+| boot B 里 systemd-pstore 运行于 | `[17.072 – 17.188]` |
+| boot B 归档的第一行 | `[17.280506]` ← 紧接着的下一条 |
+| boot A 归档的第一行 | `[0.000000]` ← 当时 `/sys/fs/pstore` 是空的，`ConditionDirectoryNotEmpty` 没过，**根本没运行** |
+
+**修法**：`/etc/systemd/pstore.conf` 设 `Unlink=no`（备份 `.orig`）。
+崩溃记录改由 `cyberdog-blackbox-rotate` 归档后自己 `rm /sys/fs/pstore/dmesg-ramoops-*` 消费掉 ——
+erase 一个 dump prz 只 zap 它自己，**不碰 console prz**（`ramoops_pstore_erase` 的 `case PSTORE_TYPE_DMESG`）。
+
+### 归档链
+`ramoops 环形区` → `systemd-pstore`(copy, 不 unlink) → `/var/lib/systemd/pstore/` → **`cyberdog-blackbox-rotate.service`** → `/var/log/cyberdog-blackbox/<时间戳>[-CRASH]/`，保留最近 30 次。
+> systemd 245 写的是**扁平文件名**(`console-ramoops-0`)，不转存的话下次开机直接覆盖，黑匣子只有一层深。
+> 目录名带 `-CRASH` 表示上次是**真崩溃**(有 `dmesg-ramoops-*`)，一眼可辨。
+
+### 验收（5 次重启实测）
+- `ramoops: using 0x200000@0xf0800000, ecc: 0`；`/proc/iomem` 24 个 `ramoops:dmesg(N/23)` + `ramoops:console`，正好铺满 2 MiB
+- 归档 **796 行 / 55639 字节**，首行 `[0.000000] Booting Linux on physical CPU 0x0000000000`，末行 `[72.434193] reboot: Restarting system`
+- 用户态面包屑：`<3>`/`<4>` 前缀能进环形区；**无前缀的 `/dev/kmsg` 进不去** —— `printk` 是 `6 6 1 7`，
+  `default_message_loglevel=6` 而 `6 >= console_loglevel(6)` 被过滤。写黑匣子必须带 `<4>` 或更低。
+- 零回归：6/6 温区、6 核 pmode2、0 failed、36 模块、9 video、2 声卡、rmem 26MB、zram 6、
+  RCE cmd=5、CAN UP、eth0 5075 pkt/s、`I2S5 Mux=ADMAIF1`、功放 `0x71=0x00`、31 个 ROS2 节点
+
+### ⚠️ 覆盖边界（别高估它）
+| 场景 | 能不能拿到 |
+|---|---|
+| panic / oops（`panic=15` 自动热重启） | ✅ |
+| 正常重启、异常重启 | ✅ |
+| **真挂死需要拔电** | ❌ **DRAM 掉电即失** |
+| 热跳闸断电 | ❌ 同上 |
+
+补这个缺口的唯一办法是**在救援笔记本上常驻串口日志**(`/dev/ttyACM0` → 落盘)，与 ramoops 互补。
+—— 待办，本轮笔记本 key 认证不通没做成。

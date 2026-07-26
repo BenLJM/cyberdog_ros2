@@ -1,0 +1,48 @@
+TIMEOUT 10
+DEFAULT jp5
+
+MENU TITLE L4T boot options
+
+LABEL primary
+      MENU LABEL primary kernel
+      INITRD /boot/initrd
+      APPEND ${cbootargs} quiet root=/dev/nvme0n1p1 rw rootwait rootfstype=ext4 console=ttyTCU0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0 
+
+# When testing a custom kernel, it is recommended that you create a backup of
+# the original kernel and add a new entry to this file so that the device can
+# fallback to the original kernel. To do this:
+#
+# 1, Make a backup of the original kernel
+#      sudo cp /boot/Image /boot/Image.backup
+#
+# 2, Copy your custom kernel into /boot/Image
+#
+# 3, Uncomment below menu setting lines for the original kernel
+#
+# 4, Reboot
+
+# LABEL backup
+#    MENU LABEL backup kernel
+#    LINUX /boot/Image.backup
+#    INITRD /boot/initrd
+#    APPEND ${cbootargs}
+
+LABEL second
+	MENU LABEL second kernel
+	LINUX /boot/Image
+	INITRD /boot/initrd
+	APPEND ${cbootargs} quiet root=/dev/nvme0n1p1 rw rootwait rootfstype=ext4 console=ttyTCU0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0 
+
+LABEL rescue
+	MENU LABEL RESCUE (RAM, JP4 kernel, no NVMe mount)
+	LINUX /boot/Image
+	FDT /boot/tegra194-mi-k91.dtb
+	INITRD /boot/initrd-rescue
+	APPEND ${cbootargs} rw rootwait console=ttyTCU0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0 cyberdog.rescue=1
+
+LABEL jp5
+      MENU LABEL JP5.1.6 (Humble)
+      LINUX  /boot-jp5/Image
+      FDT    /boot-jp5/tegra194-mi-k91.dtb
+      INITRD /boot-jp5/initrd
+      APPEND ${cbootargs} root=/dev/nvme0n1p2 rw rootwait rootfstype=ext4 console=ttyTCU0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0 panic=15 ramoops.mem_address=0xf0800000 ramoops.mem_size=0x200000 ramoops.record_size=0x10000 ramoops.console_size=0x80000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 ramoops.max_reason=3

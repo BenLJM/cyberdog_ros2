@@ -1,0 +1,14 @@
+[Unit]
+Description=Cyberdog 黑匣子:把 pstore 记录转存为带时间戳的归档
+# systemd-pstore 负责从 /sys/fs/pstore 搬到 /var/lib/systemd/pstore 并清空环形区
+Wants=systemd-pstore.service
+After=systemd-pstore.service local-fs.target cyberdog-timekeeper.service
+ConditionPathExistsGlob=/var/lib/systemd/pstore/*-ramoops-*
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cyberdog-blackbox-rotate
+
+[Install]
+WantedBy=multi-user.target
