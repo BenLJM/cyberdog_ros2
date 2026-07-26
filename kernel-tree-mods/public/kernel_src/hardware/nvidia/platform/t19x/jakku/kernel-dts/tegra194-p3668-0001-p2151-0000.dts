@@ -43,9 +43,3 @@
  * driver patch. MUST be after tegra194-camera.dtsi (SoC) is included. */
 #include "tegra194-mi-k91-rtcpu-legacy.dtsi"
 
-/* Restore the R32 camera power/clock/reset topology (VE + ISPA power domains,
- * nvcsilp CIL clock, NVCSI/VI/ISP resets) that R35 deleted. Without it NVCSI
- * sits powergated and the R32 RCE firmware dies with
- *   rce-noc: Host read timeout at address 303cc  (nvcsi 0x15a00000 + stream 4)
- * MUST be after the SoC dtsi chain so &nvcsi / &vi / &vi_thi / &isp exist. */
-#include "tegra194-mi-k91-camera-power.dtsi"

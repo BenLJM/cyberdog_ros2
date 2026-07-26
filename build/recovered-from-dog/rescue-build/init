@@ -1,0 +1,76 @@
+#!/bin/sh
+# CyberDog 一次性内核恢复 initramfs (2026-07-26)
+# 用途:新内核在 probe 阶段挂死、走不到 initrd,自动回滚守卫覆盖不到该窗口。
+#      经 RCM 把出厂 4.9 内核 + 本 initramfs 推进内存跑,挂 eMMC p1 换回上一个内核。
+# 只写 eMMC p1 上的三个文件,不碰任何分区表/引导器。
+export PATH=/bb:/bin:/sbin:/usr/bin:/usr/sbin
+
+mount -t proc proc /proc 2>/dev/null
+mount -t devtmpfs none /dev 2>/dev/null
+mount -t sysfs sysfs /sys 2>/dev/null
+
+log() { echo "rescue: $*" > /dev/kmsg 2>/dev/null; echo "rescue: $*" > /dev/console 2>/dev/null; }
+
+log "=== CyberDog 内核恢复 initramfs 启动 ==="
+
+# 先把 USB gadget 拉起来,万一恢复失败还能进去看
+/etc/jp5-gadget.sh >/dev/null 2>&1 && log "USB gadget 已起(ttyGS0 可用)" || log "USB gadget 起失败(不影响恢复)"
+
+# 等 eMMC 出现
+i=0
+while [ $i -lt 30 ]; do [ -b /dev/mmcblk0p1 ] && break; sleep 1; i=$((i+1)); done
+if [ ! -b /dev/mmcblk0p1 ]; then
+    log "!! /dev/mmcblk0p1 一直没出现,无法恢复"
+    while :; do setsid cttyhack sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1; sleep 1; done
+fi
+
+mkdir -p /mnt/e
+if ! mount /dev/mmcblk0p1 /mnt/e; then
+    log "!! 挂载 eMMC p1 失败"
+    while :; do setsid cttyhack sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1; sleep 1; done
+fi
+log "eMMC p1 已挂载"
+
+B=/mnt/e/boot-jp5
+L=/mnt/e/boot/rescue-restore.log
+{
+  echo "=== $(date 2>/dev/null) 内核恢复 ==="
+  echo "恢复前 Image:  $(md5sum $B/Image 2>/dev/null | cut -c1-16)"
+  echo "备份 prev-kernelE: $(md5sum $B/Image.prev-kernelE 2>/dev/null | cut -c1-16)"
+} >> $L 2>/dev/null
+
+if [ ! -f "$B/Image.prev-kernelE" ]; then
+    log "!! 找不到 Image.prev-kernelE,中止(不乱改)"
+    echo "!! Image.prev-kernelE 不存在,未做任何修改" >> $L
+    sync; umount /mnt/e
+    while :; do setsid cttyhack sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1; sleep 1; done
+fi
+
+# 留证:把起不来的那版存下来供事后分析
+cp $B/Image $B/Image.failed-kernelE 2>/dev/null
+cp $B/tegra194-mi-k91.dtb $B/tegra194-mi-k91.dtb.failed-kernelE 2>/dev/null
+
+cp $B/Image.prev-kernelE $B/Image && log "Image 已回滚"
+cp $B/tegra194-mi-k91.dtb.prev-kernelE $B/tegra194-mi-k91.dtb && log "DTB 已回滚"
+
+# 撤掉 ramoops cmdline,排除干扰变量
+E=/mnt/e/boot/extlinux/extlinux.conf
+if grep -q "ramoops.mem_address" $E 2>/dev/null; then
+    cp $E $E.withramoops
+    sed -i 's/ ramoops\.[a-z_]*=[0-9a-fA-Fx]*//g' $E && log "ramoops 参数已撤"
+fi
+
+{
+  echo "恢复后 Image:  $(md5sum $B/Image 2>/dev/null | cut -c1-16)"
+  echo "恢复后 DTB:    $(md5sum $B/tegra194-mi-k91.dtb 2>/dev/null | cut -c1-16)"
+  echo "=== 完成 ==="
+} >> $L 2>/dev/null
+
+sync
+umount /mnt/e
+sync
+log "=== 恢复完成,5 秒后重启进入已知可启动的内核 ==="
+sleep 5
+reboot -f
+echo b > /proc/sysrq-trigger 2>/dev/null
+while :; do :; done

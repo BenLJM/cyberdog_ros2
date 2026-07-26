@@ -881,16 +881,6 @@ static int tegra_camrtc_poweron(struct device *dev, bool full_speed)
 	if (full_speed)
 		camrtc_clk_group_adjust_fast(rtcpu->clocks);
 
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-	/*
-	 * R32 parity: reset the camera devices (isp/vi/nvcsi) here, before the
-	 * RCE core is let out of reset.  R32 tegra_camrtc_poweron() did exactly
-	 * this at exactly this point.  The R32 firmware then re-initialises the
-	 * NVCSI registers itself during its own poweron.
-	 */
-	camrtc_device_group_reset(rtcpu->camera_devices);
-#endif
-
 	ret = tegra_camrtc_deassert_resets(dev);
 	if (ret)
 		return ret;
@@ -1053,10 +1043,6 @@ static int tegra_cam_rtcpu_runtime_suspend(struct device *dev)
 
 	camrtc_clk_group_adjust_slow(rtcpu->clocks);
 
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-	camrtc_device_group_idle(rtcpu->camera_devices);
-#endif
-
 	tegra_camrtc_pm_done(dev, "runtime_suspend", err);
 
 	return 0;
@@ -1065,38 +1051,10 @@ static int tegra_cam_rtcpu_runtime_suspend(struct device *dev)
 static int tegra_cam_rtcpu_runtime_resume(struct device *dev)
 {
 	int err;
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-	struct tegra_cam_rtcpu *rtcpu = dev_get_drvdata(dev);
-#endif
 
 	tegra_camrtc_pm_start(dev, "runtime_resume");
 
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-	/*
-	 * R32 parity (tegra_cam_rtcpu_runtime_resume): power up the camera
-	 * devices listed in nvidia,camera-devices = <&isp &vi &nvcsi> BEFORE
-	 * booting the RCE.  nvhost_module_busy() -> pm_runtime_get_sync() ->
-	 * genpd VE / ISPA on, nvcsi + nvcsilp + vi + vi-const + isp clocks on,
-	 * resets deasserted.
-	 *
-	 * R35 dropped this because the R35 RCE firmware powers those
-	 * partitions itself.  The factory R32 firmware does not, so without
-	 * this the very first NVCSI register read from the RCE hits a dead
-	 * bus: "rce-noc / Host read timeout at address 303cc".
-	 */
-	err = camrtc_device_group_busy(rtcpu->camera_devices);
-	if (err < 0) {
-		tegra_camrtc_pm_done(dev, "runtime_resume", err);
-		return err;
-	}
-#endif
-
 	err = tegra_camrtc_boot(dev);
-
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-	if (err < 0)
-		camrtc_device_group_idle(rtcpu->camera_devices);
-#endif
 
 	tegra_camrtc_pm_done(dev, "runtime_resume", err);
 

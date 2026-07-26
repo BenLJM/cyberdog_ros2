@@ -156,14 +156,6 @@ struct nvhost_device_data t19_vi5_info = {
 	.moduleid		= NVHOST_MODULE_VI,
 	.clocks = {
 		{"vi", UINT_MAX},
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-		/* R32 parity: VI owned vi-const + the CSI datapath clocks, so
-		 * powering VI implied powering NVCSI.  Matches the restored
-		 * DT properties in tegra194-mi-k91-camera-power.dtsi. */
-		{"vi-const", UINT_MAX},
-		{"nvcsi", 400000000},
-		{"nvcsilp", 204000000},
-#endif
 		{"emc", 0,
 		 NVHOST_MODULE_ID_EXTERNAL_MEMORY_CONTROLLER,
 		 TEGRA_SET_EMC_FLOOR, false, UINT_MAX}
@@ -181,24 +173,9 @@ struct nvhost_device_data t19_nvcsi_info = {
 	.moduleid		= NVHOST_MODULE_NVCSI,
 	.clocks			= {
 		{"nvcsi", 400000000},
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-		/*
-		 * R32 parity: the CIL low-power clock.  R35 dropped it (and
-		 * the matching DT property) because its own RCE firmware
-		 * programs NVCSI clocks over BPMP.  The factory R32 firmware
-		 * expects the kernel to have enabled both.
-		 */
-		{"nvcsilp", 204000000},
-#endif
 	},
 	.devfs_name		= "nvcsi",
 	.autosuspend_delay      = 500,
-#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
-	/* R32 parity: reset NVCSI on power-up, and do not powergate it out
-	 * from under the R32 firmware while a client holds it open. */
-	.poweron_reset		= true,
-	.keepalive		= true,
-#endif
 	.can_powergate = true,
 };
 #endif
