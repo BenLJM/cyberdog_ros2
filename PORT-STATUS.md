@@ -469,7 +469,7 @@ erase 一个 dump prz 只 zap 它自己，**不碰 console prz**（`ramoops_psto
 3. ✅ **排除掉一个主要假设**（实测只读）：原怀疑"R32 BPMP 不认识 VE 域 → MRQ 无应答 → 阻塞"。实测证伪 —— BPMP debugfs 完整暴露 `powergate/ve` 和 `powergate/ispa`，`powergate_summary` 正常应答，`ve/state`=0、`ispa/state`=0 读取 rc=0，且**同一条 MRQ 路径上 aud/disp/xusba-c/pciex8a/gpu 正在被实际使用且已上电**；补丁引用的时钟 `nvcsilp` 204MHz、`vi_const` 408MHz 在运行内核里都存在且健康。
    → **BPMP 通信层是好的，挂死点在内核侧的 attach / runtime-PM / reset 时序。**
    头号嫌疑：`t19_nvcsi_info` 的 `.keepalive`/`.poweron_reset`，以及 `camrtc_device_group_busy()` 被放在 `tegra_cam_rtcpu_runtime_resume()` 里跨设备跨域嵌套 `pm_runtime_get_sync()`。
-4. ⏸️ 剩一个便宜且决定性的实验：BPMP debugfs 里直接 `echo 1 > powergate/ve/state` 看 VE 能不能上电。风险低但非零（万一 fault 就要拔电→RCM），**建议机主在场时做**。
+4. ✅ **VE / ISPA 点火实验已做（2026-07-27，机主在场）—— 结果是关键的好消息**，见下节。
 
 ## ✅ 冷启动验收（连续两次重启，零回归）
 
@@ -535,3 +535,39 @@ echo 0000:00:14.0 | sudo tee /sys/bus/pci/drivers/xhci_hcd/bind
    （`Unknown key name 'StartLimitIntervalSec' in section 'Service'`），限流形同虚设。必须放 `[Unit]`。
 
 修后实测闭环：`device re-enumerated, reopening` → `waiting for …` → 设备回来自动重连 → 捕获到 `cyberdog-jp5 login:`。
+
+## ✅ VE / ISPA 电源域点火实验：**能上电，且完全干净**（2026-07-27，机主在场）
+
+AI 相机主线上最便宜、最决定性的一步。只写 NVIDIA 自己的 BPMP debugfs，不动内核、不动 DT、不重启。
+
+| 步骤 | 结果 |
+|---|---|
+| `echo 1 > powergate/ve/state` | ✅ 写入成功，`ve: 0 → 1` |
+| `echo 1 > powergate/ispa/state` | ✅ 写入成功，`ispa: 0 → 1` |
+| 新增 oops / `rce-noc` / SMMU fault | **0**（点火后、静置 10s 后、恢复后三次采样都是 0） |
+| failed units / 温度 | 0 / 65.5°C 无变化 |
+| 恢复 `echo 0` | ✅ 两个域都干净落回 0，系统仍在线 |
+
+### 为什么这条结论很重要
+
+**这套 `R32 BPMP 固件 + R35 内核` 的混血系统上，VE 和 ISPA 电源域本身完全可以正常上下电。**
+也就是说 kernel-E 炸机 **不是"电源域这条路走不通"**，而是 **内核侧的 attach / runtime-PM / reset 时序**问题。
+配合前面已经排除的 BPMP 通信层，现在可以把嫌疑范围收得很窄：
+
+- `t19_nvcsi_info` 的 `.keepalive` / `.poweron_reset`
+- `camrtc_device_group_busy()` 被放在 `tegra_cam_rtcpu_runtime_resume()` 里跨设备跨域嵌套 `pm_runtime_get_sync()`
+- `vi_thi` / `isp` 这两个**没有 `reg`** 的节点被加上 `power-domains` 后的 attach 行为
+
+→ **重做 NVCSI 电源域的把握度显著提高**，NOTES 里原来写的 70–80% 可以上调。
+
+### 一个必须记住的细节
+
+BPMP 侧 `ve/state=1` 的同时，内核 genpd 里仍然是 `ve off-0`，`nvcsi/nvcsilp/vi` 的 `enable_cnt` 仍然是 0。
+**BPMP 记账与内核 genpd 记账是两套**，直接写 debugfs 会绕过 genpd。
+所以这个实验证明的是「硬件+BPMP 能上电」，**不等于**「内核把设备挂上去之后也能正常走完 attach」——
+后者正是 kernel-E 死掉的地方，必须靠拆分变体去验。
+
+### 顺带发现的噪音（不紧急）
+
+`uvcvideo: Failed to query (GET_CUR) UVC control 1 on unit 3: -32` 在持续刷屏（-32 = EPIPE），
+来自 D455 的 UVC 控制查询。当前不影响取流（30.2Hz 稳定），记一笔待查。
