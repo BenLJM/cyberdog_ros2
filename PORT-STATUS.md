@@ -571,3 +571,62 @@ BPMP 侧 `ve/state=1` 的同时，内核 genpd 里仍然是 `ve off-0`，`nvcsi/
 
 `uvcvideo: Failed to query (GET_CUR) UVC control 1 on unit 3: -32` 在持续刷屏（-32 = EPIPE），
 来自 D455 的 UVC 控制查询。当前不影响取流（30.2Hz 稳定），记一笔待查。
+
+## ✅ 背部触摸板：物理确认通过（2026-07-27，机主亲手）
+
+元器件表最后一个"只靠推理挂着"的项结案。
+
+**判据用 GPIO 中断计数，不用 input 事件流** —— 因为出厂 `touch_publisher`（`service_athena_`）
+**独占读走了 `/dev/input/event0`**，自己起个 `cat /dev/input/event0` 抓不到任何东西，
+很容易误判成"触摸板没反应"。中断计数骗不了人：
+
+```
+gpio 103 Level synaptics_dsx
+  机主第一次摸后 : 10
+  机主第二次摸后 : 28     (+18)
+```
+出厂话题 `/mi1045904/TouchState` 在发。→ 硬件 → RMI4 中断 → 驱动 → input → 出厂节点 → ROS 全链路确认。
+
+## 🔴 单目 VIO 在静止时必然发散 —— 必须开 ZUPT（出厂默认是关的）
+
+机主抱起狗轻晃后实测（狗约 14kg，只能轻晃）：
+
+| 指标 | 实测 |
+|---|---|
+| `pathimu` y 范围 | -4.6 .. **90.0 m** |
+| 相邻两点最大步长 | **97.6 m** |
+| 实际移动 | 不到 2 m |
+| 当时 `poseimu` | 全零 + 零协方差 |
+
+**这不是 bug，是单目方案的固有特性**：单目 VIO 的尺度只能靠平移激励观测，几乎静止时尺度不可观、
+协方差爆掉。出厂 launch 的 `try_zupt: false` 是给手持数据集调的参数，
+对一条**大部分时间站着不动**的四足狗完全不适用。
+
+**已改为 `try_zupt:=true`**（配 `zupt_max_velocity=0.5 / zupt_noise_multiplier=50 / zupt_chi2_multipler=2`，
+均为出厂已有的默认值），由 `OV_VIO_ZUPT` 环境变量可关。
+重启后实测：狗静止 → VIO 不初始化 → `pathimu` 无数据 = **正确行为**（不再吐垃圾轨迹）。
+
+⚠️ **下游别盲信 VIO**：它在没有持续平移激励时不会给出可用位姿。真实验收仍需狗自己行走。
+
+## ⛔ B1 物理调试串口：确认走不通（2026-07-27）
+
+机主实地确认：**狗身上没有任何裸露的调试串口**，只有 3 个 Type-C（充电 / Download / Extension）+ 1 个 HDMI，**且不能拆机**。
+
+软件侧佐证：
+- `ttyTCU0` = `combined-uart`（内核控制台），物理输出在板上 UART 引脚
+- `ttyTHS0`=GPS、`ttyTHS1`，其余 6 个 serial 节点 DT 里全是 `disabled`
+- **无 `typec` class** → 没有 Type-C PD/altmode 驱动栈，Extension 口无法靠软件配成调试 UART
+
+→ **早期启动盲区（[0, 19.4s]）永久补不上。**
+
+### 因此 AI 相机改用「RCM 兜底」模式推进
+
+| | |
+|---|---|
+| 安全网 | RCM 裸机刷写（`--boot recovery`，0726 实战一次成功，1.6GB/103s） |
+| 触发 | 挂死 → 机主拔电重启；**USB 插着断电正好进 RCM**，此场景下反而是我们要的 |
+| 定位 | 拆成两个独立可启动变体，炸了也知道是哪半 |
+| 热重启场景 | ramoops 黑匣子照常捕获 |
+| 代价 | **每次内核实验必须机主在场** |
+
+配合已证实的「VE/ISPA 能干净上电」，这条路值得走。
