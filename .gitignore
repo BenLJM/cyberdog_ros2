@@ -26,3 +26,8 @@ build/firmware/
 # ---- 杂项 ----
 .DS_Store
 *.log
+
+# ---- NVCSI 电源域两变体：Image 可由 build/build-variant-B.sh 重建，不入库 ----
+# DTB(317K) 和 SHA256SUMS 保留，它们是可审计的关键产物
+build/nvcsi-variants/B-conly/Image
+build/nvcsi-variants/good-deployed.dtb
