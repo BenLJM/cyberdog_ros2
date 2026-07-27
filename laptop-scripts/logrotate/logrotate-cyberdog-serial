@@ -1,0 +1,11 @@
+/var/log/cyberdog-serial/console.log {
+    daily
+    rotate 14
+    size 100M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 root adm
+}

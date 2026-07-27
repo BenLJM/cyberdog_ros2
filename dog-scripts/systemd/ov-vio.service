@@ -1,0 +1,51 @@
+[Unit]
+Description=OpenVINS monocular VIO (ov_msckf, JP4 chroot on JP5 host)
+Documentation=file:/usr/local/bin/ov-vio.sh
+
+# 排序: 栈和相机都先起来。相机是数据源, 没有它 VIO 只会空等。
+After=jp5-cyberdog-stack.service d455-camera.service
+Wants=d455-camera.service
+
+# 与栈同生共死, 和 d455 同一套语义:
+#   PartOf => 对栈的显式 stop/restart 传播到本单元
+#   WantedBy(见 [Install]) => 栈起来把本单元也拉起来
+# 注意: PartOf 只传播 stop 不传播 start, 所以两个都要有 —— 这是 0726 的血的教训#7。
+PartOf=jp5-cyberdog-stack.service
+
+# 起不来就别永动: 15 分钟内最多 5 次
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# chroot 的 dev/proc/sys/run bind 必须到位(脚本幂等, 与 d455/stack 共用)
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStart=/usr/local/bin/ov-vio.sh
+
+# lifecycle 节点必须显式 configure+activate, 顺带把 IR 发射器关掉。
+# 激活失败 = VIO 是个空进程, 让 unit 响亮地 failed。
+ExecStartPost=/usr/local/bin/ov-vio-activate.sh
+
+# 停止时把发射器还给 depth。这样"发射器状态"完全跟随 VIO 生命周期,
+# `systemctl stop ov-vio` 就能把深度质量原样还回去, 不留暗状态。
+ExecStopPost=/usr/local/bin/ov-vio-emitter.sh 1
+
+Restart=on-failure
+RestartSec=20
+# 78 = 缺文件/缺包, 重试无意义 -> 躺平等人
+RestartPreventExitStatus=78
+# 143 = 128+SIGTERM, 正常停机(含经 PartOf 传播的栈 stop)就是这么退的,
+# 不声明的话每次正常停机都会落 failed 态, 误导哨兵和人。
+SuccessExitStatus=143
+
+KillMode=control-group
+TimeoutStopSec=25
+
+# VIO 是纯感知, 永远让路给运动栈和相机取流。
+Nice=10
+CPUWeight=30
+
+[Install]
+# 装在栈的 .wants 下: 栈起 -> VIO 起; 栈停 -> PartOf 把 VIO 带走
+WantedBy=jp5-cyberdog-stack.service

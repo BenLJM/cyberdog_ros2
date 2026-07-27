@@ -26,7 +26,13 @@ JP4 根文件系统在 `nvme0n1p1`，运行时挂在 `/mnt/jp4`。这条路线�
 1. **initrd 自动回滚守卫** `sbin/jp5-autorevert-hook`：启动尝试计数器（>3 次未成功 → 自动恢复 `extlinux.conf.jp4-saved` 并重启），rootfs 只读探测，写保护探测，恢复内容 `cmp` 校验，失败时挂 USB gadget shell 而**不是**盲目重启循环。计数器由 `jp5-boot-ok.service`（`After=multi-user.target`）清零。
    - **2026-07-19 实战触发过一次并成功回滚**（见 eMMC `/boot/jp5-revert.log`）
    - ⚠️ **`build/artifacts/jp5-autorevert-hook.sh` 是旧的 Phase-3 版本（bash、无计数器）。用它重建 initrd 会静默把安全网降级。权威版本在 `tools/phase4/initrd-rootfs/sbin/jp5-autorevert-hook`**
-2. **串口控制台**：笔记本 `ben@10.0.0.176` 的 `/dev/ttyACM0`（115200）→ 可在 cboot extlinux 菜单远程选启动项。实测打回 `cyberdog-jp5 login:`。
+2. ~~**串口控制台**：笔记本 `ben@10.0.0.176` 的 `/dev/ttyACM0`（115200）→ 可在 cboot extlinux 菜单远程选启动项。~~
+   🔴 **2026-07-27 实测推翻，这条不能当救援手段用。**
+   那个 `/dev/ttyACM0` 不是内核控制台，是 **USB gadget 的 `acm.GS0` → 狗侧 `/dev/ttyGS0`**，上面跑的只是 `agetty`。
+   证据：①`/proc/consoles` 只有 `tty0 / ttyTCU0 / ramoops-1`，**没有 ttyGS0** ②写 `/dev/kmsg` 到不了笔记本，直接写 `/dev/ttyGS0` 才到 ③gadget 由 `nv-l4t-usb-device-mode` 在 **T+19.4s** 才创建，agetty 在 T+89s ④笔记本 `lsusb` 上没有任何第二个 usb-serial 桥。
+   **内核启动只花 15.7s，所以引导器输出和 probe 挂死整个落在 [0, 19.4s] 这个盲区里，这条线原理上看不见。** 也就**够不着 extlinux 菜单**。
+   → 真·内核控制台是 `ttyTCU0`，走板上调试 UART，需要机主接 USB-TTL(3.3V)。见新增的 §2026-07-27。
+   → 当前笔记本上已常驻 `cyberdog-serial-log.service`，覆盖 T+19.4s 之后的用户态输出 + 掉线/回归时刻，**不覆盖早期启动**。
 3. **USB 网络** 192.168.55.100 ↔ 192.168.55.1（1.8ms）。
 
 ---
@@ -70,10 +76,10 @@ JP4 根文件系统在 `nvme0n1p1`，运行时挂在 `/mnt/jp4`。这条路线�
 | CPU 功耗模式 | ✅ 已修 | 曾误停在 `MODE_10W_DESKTOP`(4核)，**已恢复出厂 `MODE_15W_6CORE`(pmode 2)**；⚠️ `/etc/nvpmodel.conf` 的 `DEFAULT` 仍是 5，rootfs 重刷会静默退回 |
 | 蓝牙 (Realtek hci0) | ⚠️ 退化 | hci0 UP RUNNING，但 JP4 的 `bluetooth_ros2.service` 在 JP5 无对应实现 |
 | D455 深度相机 | ✅ | `d455-camera.service` 已部署+enabled，随栈自启（sidecar）。848x480@30 三路影像 + IMU 200Hz 实测满速，详见 0726 条目 |
-| GPS (BCM4775) | ⚠️ 退化 | 驱动点火、`nstandby=1`；出厂节点写死 4.9 sysfs 路径 + `/dev/ttyTHS0` 是 `root:dialout` 而节点跑在 `mi` 下 → **没出过数据** |
+| GPS (BCM4775) | ✅ 链路通（待室外定星） | **2026-07-27 改判**：串口实测在发合法 Bream/UBX 帧（`0xB5 0x62`）并抓到 `$GP`/`GGA` 片段；出厂节点独占 `/dev/ttyTHS0` 且**本来就有**读线程（`scene_detection.cpp:243-250`）。`/SceneDetection` 静默是因为发布条件要求有效经纬度（室内无星）→ 出厂正确行为，**不是数据链坏**。体检：`cyberdog-gps-check.sh` |
 | 电池 / BMS | ⏸️ 物理项 | **机主已物理拆除电池**，当前适配器供电（只有 `usb-charger`，无 battery 节点） |
 | AI 头顶相机（3 sensor） | ❌ 不通 | RCE 固件活(cmd=5)、IVC 通、nvcsi initialized、3 颗 subdev 全 bound、nvmap 手术已过 —— 但采集控制面 ABI 结构性分家 |
-| 超声 ×4 / ToF / 光线 / LED | ❓ 未验证 | CAN 总线证实是活的（TX 有 ACK、TEC=0、MCU 回 timesync）。静默是出厂设计（`enable_count=0`，需上层发 ENABLE service）。**端到端从未验证过** |
+| 前超声 / ToF / 光流 / 光线 / LED | ✅ 已通 + 开机自动使能 | 0725 实测出数；**2026-07-27 补上自动使能** `cyberdog-sensors.service`：A/B 实测 `ObstacleDetection` 0.00→10.13 Hz、`BodyState` 0.00→25.01 Hz。（开源树里没人发 ENABLE，本该由闭源手机 App 发） |
 | 背部触摸板 | ✅ 已通 | 驱动 4.9→5.10 移植(3 文件 56 行)+ DT 使能；`event0=synaptics_dsx`，出厂 `touch_publisher` 节点已 activate。⏸️ 物理触摸未由人验证 |
 | 系统时钟 | ❌ 不通 | 停在 2000-01-01（双根因，见下） |
 | swap | ❌ 无 | 内核没编 `CONFIG_ZRAM`，`nvzramconfig` failed |
@@ -375,5 +381,92 @@ erase 一个 dump prz 只 zap 它自己，**不碰 console prz**（`ramoops_psto
 | **真挂死需要拔电** | ❌ **DRAM 掉电即失** |
 | 热跳闸断电 | ❌ 同上 |
 
-补这个缺口的唯一办法是**在救援笔记本上常驻串口日志**(`/dev/ttyACM0` → 落盘)，与 ramoops 互补。
-—— 待办，本轮笔记本 key 认证不通没做成。
+~~补这个缺口的唯一办法是**在救援笔记本上常驻串口日志**(`/dev/ttyACM0` → 落盘)，与 ramoops 互补。~~
+🔴 **2026-07-27 实测：`/dev/ttyACM0` 补不了这个缺口**（它是 USB gadget 的 ttyGS0，T+19.4s 才存在）。详见下节。
+
+---
+
+# 2026-07-27 追加
+
+## 🔴 「串口控制台」这条救援路是假的（三重安全网实为两重）
+
+笔记本上的 `/dev/ttyACM0` **不是内核控制台**，是 L4T USB gadget 的 `acm.GS0` → 狗侧 `/dev/ttyGS0`，上面只有一个 `agetty`。
+
+| 证据 | 结果 |
+|---|---|
+| `/proc/consoles` | `tty0` / `ttyTCU0` / `ramoops-1` —— **没有 ttyGS0** |
+| 写 `/dev/kmsg` | 笔记本收不到 |
+| 直接写 `/dev/ttyGS0` | 笔记本**收到** |
+| gadget 创建时刻 | `nv-l4t-usb-device-mode` 在 **T+19.4s**，agetty 在 T+89s |
+| 笔记本 `lsusb` | 只有 `0955:7020`，**没有第二个 usb-serial 桥** |
+
+内核启动只花 **15.7s** → 引导器输出与 probe 挂死整个落在 `[0, 19.4s]` 盲区，**这条线原理上看不见**，也够不着 extlinux 菜单。
+以前"实测打回 `cyberdog-jp5 login:`"是真的，但那是 agetty，只能证明狗已经完成启动。
+
+**已部署（笔记本 `ben@10.0.0.176`）**：`cyberdog-serial-log.service` + `/usr/local/bin/cyberdog-serial-log.py`
+→ 落盘 `/var/log/cyberdog-serial/console.log`（logrotate 14 天）。
+- **只读打开**（`O_RDONLY`）+ `CLOCAL` + `-HUPCL`：从 OS 层面保证我们不可能往那个口写一个字节
+  （狗的 extlinux 菜单在等按键，写进去会改启动项）
+- 用 by-id 稳定路径，设备消失（狗重启/RCM）不是错误，自动等回来
+- **实际覆盖**：T+19.4s 之后的用户态输出、掉线/回归的精确时刻、login 提示。**不覆盖早期启动。**
+
+**要补早期盲区只有一条路**：接板上调试 UART（`ttyTCU0`）到 USB-TTL(3.3V)。⏸️ 需机主动手。
+
+## ✅ ov_msckf 单目 VIO 上线（`ov-vio.service`）
+
+栈的 sidecar（`WantedBy` + `PartOf`，与 d455 同一套语义）。**修掉两个会静默出错的坑**：
+
+1. **内参对不上**：出厂 launch 硬编码 640x480（`fx=388.36 cx=319.38 cy=240.99`），而 D455 跑在 848x480（`fx=429.77 cx=427.41 cy=236.46`，cx 差 **108 像素**）。
+   内参错了 VIO **不报任何错**，只是安静输出错误轨迹。已按 `camera_info` 实测值覆盖，节点启动打印证实：`cam_0_wh: 848 x 480` / `cam_0_intrinsic: 429.766 429.766 427.407 236.462`。
+   （外参 `T_C0toI` 平移 `[-0.03, 0.007, 0.016]` 与 D455 手册 IMU→左红外偏移吻合，且与分辨率无关 → 保持出厂值。）
+2. **IR 点阵发射器**：开 depth 就开投射器，infra 上的散斑**跟着相机走** → 无视差的假特征 → KLT 咬住它们 → VIO 认为自己没动。**不是精度问题，是结果无效。**
+   实测 A/B（相邻像素绝对差均值）：**ON=4.152 / OFF=1.376**。
+   由 service 启动时关、停止时还原（`ov-vio-emitter.sh`，双向实测过）。代价：depth 退化成纯被动双目（当前 depth 订阅者=0）。
+
+**lifecycle 陷阱**：`ros_subscribe_msckf` 是 managed 节点，起来后停在 `unconfigured` 只发 `transition_event` —— 极易误判成"坏了"。必须显式 configure→activate。
+（另：手写 params.yaml 漏 `stereo_pairs` 会让 configure 抛异常，所以坚持用出厂 launch 只覆盖内参。）
+
+**实测无回归**：0 failed、6/6 温区、63°C、eth0 **5089 pkt/s**（基线 ~5075，运动板没被抢）、相机 infra 30.3Hz / imu 198.6Hz。
+⚠️ VIO 占 **171% CPU**（1.7/6 核），load→12，靠 `Nice=10 + CPUWeight=30` 让路。要降可调 `num_pts` 或开 `downsample_cameras`。
+⏸️ **必须机主在场才能验收**：VIO 需要运动才初始化（`no IMU excitation 0.0147 < 0.4`，狗静止是**正确行为**）。
+注：本机是小米改版，输出话题是 `odomfoot`/`odomfusion`/`poseimu`/`pathimu`，不是原版 `odomimu`。
+
+## ✅ 传感器开机自动使能（`cyberdog-sensors.service`）
+
+| 话题 | 使能前 | 使能后 |
+|---|---|---|
+| `/ObstacleDetection` | **0.00 Hz** | **10.13 Hz**（真回波 0.2227m） |
+| `/BodyState` | **0.00 Hz** | **25.01 Hz** |
+
+坐实了旧判断：开源树里没人发 ENABLE（`motion_manager.cpp:168` 建了 client 却全树零次 `async_send_request`），本该由闭源手机 App 发。
+用 `ception_msgs/srv/SensorDetectionNode`：`obstacle_detection` 发 `ENABLE_ALL(4)`；`athena_body_state` 发 `ENABLE_ROTATION_VECTOR(50)`+`ENABLE_SPEED_VECTOR(52)`；`timeout=ALWAYSON`，`clientid=9`（避开出厂 BMS=1/BT=2/AUDIO=3）。
+服务**自验收**：光有 `success=True` 不算，要话题真出数达标才算成功。
+⚠️ 我们是常驻 ALWAYSON client（引用计数语义）→ 手机 App 之后关不掉这些传感器。要还原：`SENSOR_DISABLE=1` 跑一次。
+
+## 🔴 新踩的坑：`chroot ... su - mi -c` 在无 tty 时吞掉内层 stdout
+
+手工跑（有 tty）能看到全部输出，**systemd 起的时候 journal 里一行都没有**；加 `python3 -u` 无效（不是 python 缓冲，是 `su` 那一层）。
+对"价值全在自验收输出"的服务等于白做。**修法**：包装器先把输出抓进变量，再由自己逐行 echo。
+⚠️ 同一个吞噬也影响既有的 `d455-camera-inner.sh` 和新的 `ov-vio-inner.sh` 的内层日志（关键输出走宿主侧脚本，所以只是观测性损失）。
+
+## ✅ GPS 改判：链路是通的，不需要写桥
+
+原判断「出厂节点没有串口读线程 → 数据链没通 → 得自己写个桥」**是错的**：
+1. 开源 `scene_detection.cpp:243-250` **本来就有**读线程，init 里就 `SetMsgRate(0xF0,…)` 开了 GPGGA/GPRMC/GPSV
+2. 出厂 `service_scene_detection` **独占持有** `/dev/ttyTHS0` 并在读 —— 再写一个桥只会互相抢字节
+3. 串口实测活着：合法 Bream/UBX 帧同步头 `0xB5 0x62`（class 0x04 INF / 0x02），并抓到 `$GP`/`GGA` 片段
+4. 静默的真因在 `gps_data_receiver_callback`：`if (flag==1 && (lat!=0 || lon!=0))` —— **没有效经纬度就一条不发**。室内无星 → 0 Hz 是**出厂正确行为**
+5. `GPS_START` 服务返回 success
+
+**唯一没验证的是室外能不能定星** ⏸️ 需机主把狗抱到露天。
+体检工具：`cyberdog-gps-check.sh`（驱动层 + 串口活性 + ROS 话题层，一条命令）。
+⚠️ 波特率 **3000000 是对的**，别去"修"它。
+
+## 🔬 kernel-E 炸机静态分析（§6.4 前置，零风险离线完成）
+
+1. **kernel-E 实际改了什么**：DTB 侧只有两处功能改动 —— 触摸板（已证明是好的，今天仍在跑）+ 相机电源拓扑（`nvcsi/vi/vi-thi/isp` 加 power-domains+resets+clocks）。ramoops 根本不在 DTB 里（纯 extlinux cmdline），"H2 拆分"对 DTB 输出零影响。Image 侧多了 C 补丁 0002/0003/0004：`camrtc_device_group` 标记 good=**1** / failed=**4**，`nvcsilp` good=0 / failed=1。
+2. 🔴 **A/B 对照没有真正隔离元凶**：撤除时 DT 那半和 C 补丁那半是**一起**撤的。现有证据只支持"相机电源这项工作整体是元凶"，**不支持"具体是 DT 还是 C 补丁"**。下次必须拆成两个独立可启动变体（血的教训#1 的直接应用）。
+3. ✅ **排除掉一个主要假设**（实测只读）：原怀疑"R32 BPMP 不认识 VE 域 → MRQ 无应答 → 阻塞"。实测证伪 —— BPMP debugfs 完整暴露 `powergate/ve` 和 `powergate/ispa`，`powergate_summary` 正常应答，`ve/state`=0、`ispa/state`=0 读取 rc=0，且**同一条 MRQ 路径上 aud/disp/xusba-c/pciex8a/gpu 正在被实际使用且已上电**；补丁引用的时钟 `nvcsilp` 204MHz、`vi_const` 408MHz 在运行内核里都存在且健康。
+   → **BPMP 通信层是好的，挂死点在内核侧的 attach / runtime-PM / reset 时序。**
+   头号嫌疑：`t19_nvcsi_info` 的 `.keepalive`/`.poweron_reset`，以及 `camrtc_device_group_busy()` 被放在 `tegra_cam_rtcpu_runtime_resume()` 里跨设备跨域嵌套 `pm_runtime_get_sync()`。
+4. ⏸️ 剩一个便宜且决定性的实验：BPMP debugfs 里直接 `echo 1 > powergate/ve/state` 看 VE 能不能上电。风险低但非零（万一 fault 就要拔电→RCM），**建议机主在场时做**。

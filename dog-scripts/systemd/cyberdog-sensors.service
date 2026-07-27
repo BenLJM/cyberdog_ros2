@@ -1,0 +1,37 @@
+[Unit]
+Description=CyberDog board sensors auto-enable (ultrasonic / ToF / optical-flow / body-state)
+Documentation=file:/mnt/jp4/home/mi/cyberdog-sensor-enable.py
+
+# 出厂设计下这些传感器默认静默, 使能请求本该由闭源手机 App 发。
+# 开源树里 motion_manager.cpp 建了 client 却从没 async_send_request ——
+# 不补这一刀, 超声/ToF/光流/BodyState 在 JP5 上永远是 0 Hz。
+After=jp5-cyberdog-stack.service
+Requires=jp5-cyberdog-stack.service
+
+# 与栈同生共死: 栈停 -> 本单元停; 栈起 -> 靠 [Install] 的 WantedBy 再跑一次。
+# 必须两个都有 —— PartOf 只传播 stop 不传播 start(0726 血的教训#7)。
+# 栈重启后使能状态会丢(服务端 clientcount 跟着节点走), 所以"跟随栈重跑"是刚需。
+PartOf=jp5-cyberdog-stack.service
+
+StartLimitIntervalSec=600
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+# 脚本内部自己等服务出现(最多 180s), 这里给足余量
+TimeoutStartSec=300
+ExecStart=/usr/local/bin/cyberdog-sensors-enable.sh
+# oneshot 跑完就退出, 但要让 systemd 记住"已经成功使能过"
+RemainAfterExit=yes
+
+# 使能失败要看得见: 失败了传感器就是黑的, 假装成功比报错更糟。
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=78
+
+# 可调: 传感器服务端按 clientid 区分调用方, 数字越小优先级越高。
+# 9 = 明确避开出厂 client(BMS=1 / BLUETOOTH=2 / AUDIO=3 ...)。
+Environment=SENSOR_CLIENTID=9
+
+[Install]
+WantedBy=jp5-cyberdog-stack.service

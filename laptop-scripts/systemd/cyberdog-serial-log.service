@@ -1,0 +1,21 @@
+[Unit]
+Description=CyberDog serial console recorder (ttyACM0 -> disk)
+Documentation=https://github.com/ben/cyberdog PORT-STATUS.md
+# 设备不在也要跑 —— 脚本自己会等狗上电重新枚举，
+# 用 BindsTo=/Requires= 反而会在狗重启时把服务打死。
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cyberdog-serial-log.sh
+Restart=always
+RestartSec=5
+# 记录器唯一的职责是别死。永不因重启过频被 systemd 放弃。
+StartLimitIntervalSec=0
+# 日志内容全部进文件，不要再灌一份进 journal
+StandardOutput=null
+StandardError=journal
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
