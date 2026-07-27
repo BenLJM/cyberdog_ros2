@@ -107,14 +107,30 @@ def configure_tty(fd):
 
 
 def open_port(dev):
-    """只读打开并配置。失败返回 None。"""
+    """只读打开并配置。返回 (fd, rdev)。"""
     fd = os.open(dev, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
     try:
         configure_tty(fd)
+        rdev = os.fstat(fd).st_rdev
     except Exception:
         os.close(fd)
         raise
-    return fd
+    return fd, rdev
+
+
+def device_changed(dev, rdev):
+    """设备是不是已经不是我们打开的那个了？
+
+    🔴 2026-07-27 实测踩到的坑：狗重启后 USB 重新枚举，by-id 符号链接从
+    ttyACM0 指到了 **ttyACM1**，而我们手上那个旧 fd 指向已经消失的 ttyACM0。
+    这种情况下 read() 只是一直返回 EAGAIN（不报错），于是记录器**看似在跑、
+    实际上永远收不到一个字节** —— 整个重启窗口一行都没记到。
+    所以不能只依赖 read 报错，必须主动比对设备号。
+    """
+    try:
+        return os.stat(dev).st_rdev != rdev
+    except OSError:
+        return True   # 路径没了 = 肯定变了
 
 
 def main():
@@ -150,7 +166,7 @@ def main():
             continue
 
         try:
-            fd = open_port(dev)
+            fd, rdev = open_port(dev)
         except OSError as e:
             if not waiting_logged:
                 log.write("%s === cannot open %s: %s ===\n" % (stamp(), dev, e))
@@ -159,11 +175,21 @@ def main():
             continue
 
         waiting_logged = False
-        log.write("%s === port opened, listening ===\n" % stamp())
+        log.write("%s === port opened, listening (rdev=%d,%d) ===\n"
+                  % (stamp(), os.major(rdev), os.minor(rdev)))
 
         # --- 读循环 ---
+        next_check = time.time() + 1.0
         try:
             while not stop["flag"]:
+                # 每秒确认一次手上这个 fd 还对应着当前的设备（见 device_changed）
+                now = time.time()
+                if now >= next_check:
+                    next_check = now + 1.0
+                    if device_changed(dev, rdev):
+                        log.write("%s === device re-enumerated, reopening ===\n" % stamp())
+                        break
+
                 try:
                     chunk = os.read(fd, 4096)
                 except OSError as e:

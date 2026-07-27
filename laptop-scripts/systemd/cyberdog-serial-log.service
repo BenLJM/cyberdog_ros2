@@ -1,17 +1,20 @@
 [Unit]
-Description=CyberDog serial console recorder (ttyACM0 -> disk)
-Documentation=https://github.com/ben/cyberdog PORT-STATUS.md
+Description=CyberDog serial console recorder (ttyGS0 via USB gadget -> disk)
+Documentation=file:/usr/local/bin/cyberdog-serial-log.py
 # 设备不在也要跑 —— 脚本自己会等狗上电重新枚举，
 # 用 BindsTo=/Requires= 反而会在狗重启时把服务打死。
 After=local-fs.target
+# 🔴 StartLimit* 必须放在 [Unit] 里。放进 [Service] 会被 systemd 当成未知键忽略
+# （journal 里报 `Unknown key name 'StartLimitIntervalSec' in section 'Service'`），
+# 限流形同虚设。2026-07-27 实测踩到。
+# 0 = 不限流：记录器唯一的职责就是别死，永不因重启过频被放弃。
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/cyberdog-serial-log.sh
 Restart=always
 RestartSec=5
-# 记录器唯一的职责是别死。永不因重启过频被 systemd 放弃。
-StartLimitIntervalSec=0
 # 日志内容全部进文件，不要再灌一份进 journal
 StandardOutput=null
 StandardError=journal

@@ -470,3 +470,68 @@ erase 一个 dump prz 只 zap 它自己，**不碰 console prz**（`ramoops_psto
    → **BPMP 通信层是好的，挂死点在内核侧的 attach / runtime-PM / reset 时序。**
    头号嫌疑：`t19_nvcsi_info` 的 `.keepalive`/`.poweron_reset`，以及 `camrtc_device_group_busy()` 被放在 `tegra_cam_rtcpu_runtime_resume()` 里跨设备跨域嵌套 `pm_runtime_get_sync()`。
 4. ⏸️ 剩一个便宜且决定性的实验：BPMP debugfs 里直接 `echo 1 > powergate/ve/state` 看 VE 能不能上电。风险低但非零（万一 fault 就要拔电→RCM），**建议机主在场时做**。
+
+## ✅ 冷启动验收（连续两次重启，零回归）
+
+验收脚本 `cyberdog-acceptance.sh` —— 重启前后跑同一份，逐行 diff 即回归报告。
+
+两次重启后全部一致：`0 failed`、6/6 温区、pmode 2、rmem 26MB、0 oops、0 deferred、9 video、2 声卡、
+can0 UP、`I2S5 Mux=ADMAIF1`、eth0 **5107 pkt/s**、37 个 ROS2 节点、
+相机 30.2Hz / imu 196.9Hz、`ObstacleDetection` 10.0Hz、`BodyState` 25.0Hz、
+`ov_msckf` **active [3]**、`emitter_enabled=0`、黑匣子归档 4→6（每次开机都归档，首行 `[0.000000] Booting Linux`）。
+
+**两个新服务冷启动自证**（journal 原文）：
+```
+[ov-vio-emitter]  emitter_enabled=0 OK (attempt 1)
+[ov-vio-activate] final state: active [3]
+[cyberdog-sensors] OK /mi1045904/ObstacleDetection -> 9.93 Hz
+[cyberdog-sensors] OK /mi1045904/BodyState -> 23.70 Hz
+[cyberdog-sensors] RESULT: all sensor groups enabled and verified
+```
+
+## 🔴 新问题：传感器使能会运行时退化，且**重发 ENABLE 救不回来**
+
+运行约 11 小时后实测 `ObstacleDetection` 从 10 Hz **掉到 0.00 Hz**（`BodyState` 从 25 降到 15，未归零）。
+
+排查结论（都是实测）：
+| 层 | 状态 |
+|---|---|
+| CAN 总线 | ✅ 健康：`ERROR-ACTIVE`、berr-counter 0/0、零 bus-error/bus-off、rx **45 pkt/s** |
+| ROS 服务端 | ✅ 应答正常：重发 `ENABLE_ALL` 返回 `success=True, clientcount=2` |
+| 话题 | ❌ 仍然 **0.00 Hz** |
+| 强制刷新（`DISABLE_ALL` → `ENABLE_ALL`） | ❌ 无效，且 `DISABLE_ALL` 后 clientcount **没有下降** |
+| 重启 | ✅ **当场恢复到 10 Hz** |
+
+→ 典型的**引用计数记账与硬件真实状态漂移**：服务端认为"已经开着，不必再下发"，而 MCU 侧那一路其实已经卡死。
+→ 和出厂那个已知缺陷吻合：`get_regulater_name()` 三次 `snprintf` 都从偏移 0 写，导致 **MCU 掉线自愈从未生效**（JP4 上同样坏）。
+→ **待办**：加一个传感器健康哨兵（timer，发现 0 Hz 持续 N 次就重启栈并告警）。目前唯一恢复手段是重启。
+
+## 🔴 狗重启会打死笔记本的 xHCI（USB 救援通道没有想象中可靠）
+
+第二次重启后笔记本 `lsusb` 上**整个 bus 003 全没了**，dmesg：
+```
+xhci_hcd 0000:00:14.0: xHCI host controller not responding, assume dead
+xhci_hcd 0000:00:14.0: HC died; cleaning up
+```
+狗侧完全正常（UDC 已绑定、4 个 function 都在、`/dev/ttyGS0` 在、`EP 0 enabled`）—— **是笔记本侧的控制器猝死**。
+
+**救法**（已实测，来自旧记忆条目）：
+```bash
+echo 0000:00:14.0 | sudo tee /sys/bus/pci/drivers/xhci_hcd/unbind
+sleep 3
+echo 0000:00:14.0 | sudo tee /sys/bus/pci/drivers/xhci_hcd/bind
+```
+⚠️ 先确认笔记本的 ssh 不走 USB 网卡（本机走 PCIe 的 `wlp0s20f3`，安全）。
+⚠️ **含义**：USB 救援通道（192.168.55.1）和串口日志在狗重启后**可能需要人工 unbind/bind 才能恢复**。
+做高风险内核改动前要把这条算进去 —— 它不是无人值守可靠的。
+
+## 🔧 串口记录器修掉两个缺陷（都是 A1 重启验收暴露的）
+
+1. **设备重新枚举后记录器抱着死 fd 空转**：狗重启后 by-id 符号链接从 `ttyACM0` 指到了 `ttyACM1`，
+   而旧 fd 指向已消失的 ttyACM0，`read()` 只是一直返回 `EAGAIN` **不报错** →
+   记录器看似在跑、实际永远收不到一个字节，**整个重启窗口一行没记到**。
+   修法：每秒 `os.stat(dev).st_rdev` 与 `os.fstat(fd).st_rdev` 比对，变了就重开。
+2. **`StartLimitIntervalSec` 放错 section**：写在 `[Service]` 里会被 systemd 当未知键忽略
+   （`Unknown key name 'StartLimitIntervalSec' in section 'Service'`），限流形同虚设。必须放 `[Unit]`。
+
+修后实测闭环：`device re-enumerated, reopening` → `waiting for …` → 设备回来自动重连 → 捕获到 `cyberdog-jp5 login:`。
