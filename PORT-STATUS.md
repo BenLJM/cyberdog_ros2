@@ -2385,3 +2385,109 @@ ftrace 同一套过滤器，统计内核相机函数调用。
 **`vi5_power_on` / `vi5_power_off`（JP4 38/54，JP5 0/0）—— VI 侧的同类缺口**，
 以及 `tegra_csi_s_power`（我直接调了 `csi_power_on`，但没走 subdev 的 `s_power` 路径，
 后者还会连带做别的事）。**下一轮就补这两条**，A/B 表已经把清单列好了。
+
+### stage23：VI 侧也补上 nvhost 上电（两条都补齐了，**仍零帧**）
+
+`struct tegra_vi_channel` 里有 `ndev`（VI 的 nvhost platform_device），
+在 `vi_capture_setup()` 通道建立成功之后直接 `nvhost_module_busy(chan->ndev)`，
+顺序：VI 上电 → CSI 上电(stage22) → CSI 开流(stage9/11)。
+
+变体 **AC**（Image `f0c919f4460cf107` / DTB `2c628a9cb08b3c7a`）实测：
+
+```
+[598.859085] tegra194-vi5 15c10000.vi: r32-vipwr: vi nvhost_module_busy rc=0
+[598.859102] t194-nvcsi 15a00000.nvcsi: r32-csipwr: csi_power_on rc=0
+[608.171453] t194-nvcsi 15a00000.nvcsi: r32-csipwr: csi_power_on rc=0
+...
+[608.172403] tegra194-vi5 15c10000.vi: r32-abi: VI channel setup accepted:
+             hw_channel_id=1 vi_channel_mask=0x800000000 queue_depth=9 request_size=704
+[609.754770] tegra194-vi5 15c10000.vi: vi capture get status failed
+```
+
+两条上电标记都打出来了、`vi_channel_mask=0x800000000`（有效轮次），**argus 路径依旧零帧**。
+
+⇒ **确定排除：「缺 nvhost 上电」不是病根。**
+
+---
+
+## 🏆 判决实验：绕开 argus 直接走 v4l2 —— **相机出真图了**
+
+### 为什么想到做这个
+
+读 R32 源码的 `vi5_channel_start_streaming()` 时发现一件关键的事：
+**R32 的 v4l2 层是【骑在 capture 驱动之上】的** —— 它自己调
+`vi_channel_open_ex()` / `vi_capture_setup()`，注释还明确写着
+`csi stream/sensor devices should be streamon post vi channel setup`。
+
+再回头看 A/B 表：JP4 那一列全是 v4l2 层的函数
+（`tegra_channel_set_power` / `camera_common_s_power` / `vi5_power_on` /
+`ov13b10_set_gain`）。**也就是说 JP4 的工作路径是 `v4l2 → capture`，
+而 JP5 上 argus 走的是「直接 capture」。**
+
+于是这个实验把剩余问题空间对半劈开：v4l2 能取到帧 ⇒ 内核/硬件/RCE 固件整条链是通的。
+
+### 结果：`/dev/video1` 一次取满
+
+```
+v4l2-ctl -d /dev/video1 --stream-mmap --stream-count=5 --stream-to=/tmp/v4l2-frames.raw
+→ 131,289,600 字节 = 5 × 26,257,920   (4208×3120 RAW10，一帧 8416 字节/行 × 3120 行)
+```
+
+`/dev/video1` = `vi-output, ov13b10 2-0036` = 主 AI 相机。退出码 0，帧数精确。
+
+### 证明这不是垃圾内存（三重）
+
+**① 黑电平精确落在 64**（OV13B10 的标称黑电平）：
+
+| 帧 | 16 位均值 | ÷64 → 10 位 |
+|---|---|---|
+| 0 | 4083.6 | **63.81** |
+| 1 | 4097.0 | **64.02** |
+| 2 | 4096.6 | **64.01** |
+
+⚠️ 坑：一开始按 `& 0x3FF` 掩码分析，把数据毁了（值本来就在 4096 附近，
+掩掉高位只剩噪声位）→ 直方图看着像乱码、FPN 相关≈0，差点误判成垃圾内存。
+**RAW10 是左移 6 位装在 16 位容器里的，黑电平 64×64=4096。**
+
+**② Bayer 行类型的硬件签名**（同一帧内）：
+
+| 通道 | 均值 | 标准差 |
+|---|---|---|
+| R  | 4092.31 | 44.85 |
+| Gr | 4087.06 | 48.81 |
+| Gb | 4079.13 | **255.94** |
+| B  | 4075.96 | **255.74** |
+
+两类 Bayer 行的噪声差 **5 倍** —— 未初始化内存不会有这种结构。
+
+**③ 增益扫描（决定性）** —— 噪声随模拟增益单调放大：
+
+| 设增益 | 回读 | 均值 | 标准差 | max |
+|---|---|---|---|---|
+| 16  | 16  | 4084.6 | **184.03** | 4868 |
+| 64  | 64  | 4026.7 | **193.17** | 5893 |
+| 128 | 128 | 3953.0 | **218.06** | 6598 |
+| 200 | 200 | 3875.9 | **252.22** | 6214 |
+
+**垃圾内存不会响应 I²C 增益寄存器写入。这是真传感器在出真图。**
+（画面本身是暗场噪声 —— 采集时是夜里，镜头前没光。这不影响结论。）
+
+### 这条结论改写了整个战役的定性
+
+> **AI 相机的内核 / DTB / RCE 固件链在 JP5 上是【完全通的】。**
+> 二十来个变体、三千多行补丁做的事**是对的、也是必需的**
+> （v4l2 路的日志里 `r32-mipical` / `r32-padcfg` / `r32-recal` / `r32-csipwr`
+> / `r32-vipwr` / `r32-abi` / `r32-sync` 全部在跑）。
+> 剩下的**唯一**问题窄化成：**R32 的闭源 libargus 怎么用 R35 的 capture chardev**。
+
+### 剩余缺口与推荐路线
+
+出厂栈用的是 argus，所以端到端还没通。两条路：
+
+1. **修 argus 侧**（难）：R32 闭源 libargus ↔ R35 capture chardev 的 ABI 差异，
+   已知的最深一层是 nvmap handle 模型（见 0725 条目），不是短工程。
+2. **✅ 推荐：写 v4l2 → ROS2 桥**，把 `/dev/video1` 直接发到出厂栈期望的话题上。
+   这正是本项目已经验证过的模式（D455 的 `rs_bridge` / `/opt/lrs-wrapper`）。
+   注意 13MP@30fps = 787 MB/s，需要降采样/降帧率，或只在需要时抓单帧。
+
+**探针**：`tools/camera-probes/v4l2-direct.sh`（含完整判决逻辑与红线保护）。
