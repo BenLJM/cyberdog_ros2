@@ -2131,8 +2131,24 @@ r32-resp: PHY_STREAM        result=0   ← 接受
 deskew（只在 >1.5 Gbps 需要，本机 1.12 Gbps）、
 CSI 消息未被处理（六条 `result=0`，且与 DUMPREGS 的 `result=1` 形成对照）。
 
-**唯一还没试过的东西**：`CAPTURE_PHY_STREAM_RESET_REQ (0x3A)` —— 上游内核
-从不使用它，但 R32 固件里有。若 R32 期待在 open 之前先 reset PHY，
-这就是最后一块缺失的拼图。**下一轮第一件事就试它**（改动极小：在
-`csi5_stream_open_r32()` 里 open 之前插一条 RESET，用现成的
-`r32_csi_submit_wait()` 发，看返回码）。
+~~**唯一还没试过的东西**：`CAPTURE_PHY_STREAM_RESET_REQ (0x3A)`~~ ——
+**已试，也排除**（stage18 / 变体 X）：固件**支持并执行了**它
+（`r32-resp: PHY_RESET result=0`，四条全 0），**仍然零帧**。
+
+### 软件侧搜索空间已穷尽
+
+到此为止，软件能控制、能观测的每一项都已逐条验证或排除：
+
+配置内容 ✅ 配置时序 ✅ RCE 接受 ✅（且会区分——`DUMPREGS` 回 1）
+PHY 复位 ✅ 传感器发射 ✅ MIPI 校准 ✅ 全部时钟 ✅ 包匹配 ✅
+lane 极性 ✅ 描述符与消息 ABI ✅ trace 解码 ✅
+—— **NVCSI 中断依然 Δ=0**。
+
+再往下需要本树没有的信息：
+1. **T194 的 NVCSI 寄存器映射**（`csi4_registers.h` 的偏移在 T194 上不对应；
+   固件自带的 `PHY_DUMPREGS` 这台 R32 固件没实现）——
+   得从 R32 内核源或 Tegra TRM 找。
+2. **R32 固件内部行为**：它接受了全部配置、执行了 PHY 复位，却不让 NVCSI 进入
+   接收态。剩下的可能性偏向"某个 R32 期待的前置状态由 R32 内核在别处建立，
+   而我们还没找到那一处" —— 这类东西只能靠拿到 **R32 的 nvcsi/csi5 内核源**
+   逐函数比对。
