@@ -1083,3 +1083,58 @@ backport 的 static_assert 只锁了外层（`capture_descriptor==704`、`config
 
 ### 判据保持不变
 `/tmp/frames.raw > 0` 字节（`r32-frames-experiment.sh`）。
+
+## 🔬 变体 I：内联 IOVA 修复已生效，但仍零帧 —— 墙在描述符「内容」而非布局（2026-07-28 深夜）
+
+### 变体 I 做了什么
+
+对比两代 `vi5_setup_surface` 发现的真实差异：
+- **R32**：`desc->ch_cfg.atomp.surface[0].offset/offset_hi = IOVA`（描述符**内联**）
+- **R35**：`desc_memoryinfo->surface[0].base_address = IOVA`（**独立表**），
+  而 `atomp.surface[0].offset` 恒为 **0**
+
+R32 固件按自己的范式读内联地址 → 读到 0 → 帧 DMA 向空地址。
+这正是 0725「每帧内存模型换范式（reloc vs buffer-table）」在 v4l2 路径的具体形态。
+
+stage4 在门控下把同一个 offset 补写进 `atomp.surface[0/EMBEDDED]`，memoryinfo 照旧写（R32 固件无视它）。
+**实测标记确认生效**：
+```
+tegra-capture-vi: r32-vi5: inline surface IOVA active (0x0000007ffe000000)
+```
+IOVA 数值合理（40 位 SMMU 地址空间内）。**但仍然 `request timed out after 2500 ms`。**
+
+### 布局层已完全排除（逐字节核对）
+
+用 backport 实际编进内核的 `camrtc-capture-r32.h` 重算（`/tmp/sz2.c` 方法）：
+```
+descriptor=704  ch_cfg@64  status@624   ← 与 backport 的 static_assert 逐项吻合
+ch_cfg=160  match@4  frame@24  pixfmt@52  atomp@104
+atomp.surface[0].offset 绝对偏移 = 168
+```
+且 `ch_cfg` 两代**逐字节同构**（size/match/frame/pixfmt/atomp 偏移全部相同）。
+→ **match 段和内联 IOVA 的位置都是对的，布局不是问题。**
+
+⚠️ 中途我曾据未打 backport 的原始头算出「status 错位 352 字节」并以为找到真凶 ——
+**那是错的**：backport 用独立的 `camrtc-capture-r32.h` 让整个内核统一看到 R32 布局
+（`camrtc-capture.h` 里加了 `#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)` 切换，无 ODR 风险）。
+**算布局必须用实际参与编译的那份头。**
+
+### 现在的精确边界
+
+| 层 | 状态 |
+|---|---|
+| 电源域 / prod / MIPI 校准 / 传感器流出 | ✅ 全部实测通过 |
+| 控制面（0x10 setup accepted、csi5 三消息 R32 语义） | ✅ |
+| 描述符**布局**（704/ch_cfg@64/status@624/atomp@104） | ✅ 逐字节核对通过 |
+| 描述符**内容**（内联 IOVA 已补，数值合理） | ✅ 已写入并验证 |
+| **帧完成** | ❌ 仍 2500ms 超时，RCE 零异常零 VINOTIFY |
+
+**下一轮的三个候选**（按优先级）：
+1. **flags 位域**：R35 删了 `fmlite_enable`(bit12)，`compand_enable` 从 bit13 挪到 bit12。
+   `capture_template` 是 R35 语义填的 —— 需确认 R32 头下这些位的实际含义与填值一致。
+2. **`capture_flags` / `frame_start_timeout`**：R32 需要 `CAPTURE_FLAG_STATUS_REPORT_ENABLE`
+   才会写回状态；模板里若没置位，固件可能"做了但不报"。
+3. **syncpoint / GoS**：R35 `nvhost_syncpt_get_gos()` 不存在（NOTES 点名的头号未知数），
+   `progress_sp` 若无效，固件无法通知完成 —— 与「零 VINOTIFY + 超时」高度吻合。
+
+第 3 条与 0725 NOTES 的预言最吻合，建议优先。
