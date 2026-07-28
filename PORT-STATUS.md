@@ -2044,9 +2044,9 @@ Irq#  Count   Runtime  Max rt  Name
    `PHY_STREAM_OPEN` 是 stage3 的 **fire-and-forget**（`rc=264` 只是 IVC 写入的
    字节数，不代表 RCE 处理了）。R32 固件本应回 RESP —— 应该改成等应答并检查
    返回码，而不是发完就走。这是目前最大的未验证假设。
-2. **`lane_swizzle` / `lane_polarity`**：stage3 的 `brick_config` 是 memset 清零后
-   只设 `phy_mode`。本机 DT 没有 `lane_polarity` 属性（=0，与 R35 行为一致），
-   但 `lane_swizzle` 恒为 0 —— 若出厂板的四条 lane 物理走线做过交换，
-   NVCSI 就会在错误的引脚上监听。**出厂 DTB 里是否有 swizzle 相关属性值得核对。**
+2. ~~**`lane_swizzle` / `lane_polarity`**~~ —— **已排除**：`dtc` 解出厂
+   `tegra194-mi-k91.dtb` 全文搜 `lane_polarity|lane_swizzle|swizzle|deskew`
+   **一条都没有**，我们的运行时 DT 同样没有，`port-index=0x04` 两边一致。
+   ⇒ 不需要 swizzle，stage3 的清零是对的。
 3. **PHY/CIL 寄存器的链路状态**：stage15 的 dump 偏移取错了（读到的是数据类型表）。
    要读 `CSI5_PHY_OFFSET = 0x010000` 那一族里的链路/错误状态。
