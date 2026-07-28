@@ -1272,3 +1272,35 @@ chroot 里的 argus/nvargus 本来就走 ioctl 路径，reloc pass 会自动生�
 工作量中等，价值是多一条不依赖 chroot 的验证途径。
 
 **先做 A** —— 它可能直接出图，而且是真实目标场景。
+
+## ⏳ 路线 A 首次尝试：卡在 GStreamer/EGL，未触及内核层（2026-07-28 收尾）
+
+用 `nvgstcapture-1.0` 走 argus 路径的第一次尝试**没能到达内核**：
+```
+nvbuf_utils: Could not get EGL display connection
+GStreamer-CRITICAL: gst_element_link_pads_full: assertion 'GST_IS_ELEMENT (dest)' failed
+ERROR <create_vid_enc_bin:3220> Elements could not link encoder & parser
+```
+**判据证实它没到内核**：采集窗口内 `timed out` **0 次**、`r32-abi` 日志 **0 条**
+（对比 v4l2 路径每次都刷 16 次超时）。
+→ 这是**用户态 GStreamer 的编码器/EGL 链问题**，与本工程的内核改动无关。
+
+⚠️ 另：`nvargus-daemon` 在 chroot 里被 Terminated，启动方式需要再调
+（`nvargus-daemon --help` 会前台阻塞，别在自动化脚本里直接调它 —— 本轮因此吃了一次 ssh 超时）。
+
+### 下一轮路线 A 的正确做法（三选一，按可靠性排序）
+
+1. **出厂 ROS2 相机节点**：`/opt/ros2/cyberdog/lib/athena_camera/maincamera` ——
+   它就是这个工程要支持的最终用户态，且不依赖 GStreamer 编码器链。
+   ⚠️ 红线仍在：**不对 active 的 `camera_server` 调 configure**（栈停着时它不 active，可直接跑二进制）
+2. **`nvgstcapture` 纯图像模式**：绕开 `create_vid_enc_bin`（`--mode=1` 只出 JPEG，不建视频编码器）
+3. **jetson_multimedia_api 的 argus 示例**：`/usr/src/jetson_multimedia_api/argus/`，
+   最小依赖，但可能需要现场编译
+
+### 路线 B（备选，工作量中等但更彻底）
+
+把 `r32_reloc_vi_capture_request_buffers_locked()` 也挂到内核内部路径
+`vi_capture_request()`，让 `v4l2-ctl` 直采也走 reloc。
+好处：验证链完全不依赖 chroot 用户态，排障面积小得多。
+做法：在 `vi_capture_request()` 里门控调用同一个 reloc 函数
+（注意它现在从 `req->reloc_relatives` 读用户态指针，内核内部路径需要一个不走 `copy_from_user` 的变体）。
