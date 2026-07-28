@@ -1339,3 +1339,43 @@ ERROR <create_vid_enc_bin:3220> Elements could not link encoder & parser
 
 **先读**：`0002` 补丁里 `r32_reloc_vi_capture_request_buffers_locked()` 全文
 （`build/r32-capture-backport/0002-*.patch` 第 163-315 行），看它除了 reloc 还做了什么。
+
+## 🔬 变体 J（路线 B / dma_sync）：假设不成立，但排除法又收紧一格（2026-07-28 终章）
+
+**实测**：变体 J 构建部署正常启动，但 **`r32-sync` 标记根本没打印** ——
+我的守卫条件 `capture->requests.iova != 0` 正确地挡住了执行。
+
+**查证结果**：两条路径的描述符环内存来源根本不同
+| 路径 | 描述符环 | 是否需要 sync |
+|---|---|---|
+| ioctl（argus） | `capture->requests` = 从用户态 nvmap handle **pin** 出来的 | 需要 → reloc pass 末尾确实做了 |
+| v4l2（内核内部） | `chan->request[] = dma_alloc_coherent(rtcpu_dev, ...)` | **不需要** —— 一致性内存 |
+
+→ **dma_sync 假设不成立**，v4l2 路径的描述符本来就对 RCE 可见。
+守卫条件把它挡住是对的（否则会对一段 `iova=0` 的内存做 sync，可能更糟）。
+
+### 这一轮仍有净收获
+
+1. **确认 v4l2 路径的描述符环是 coherent 的** —— 可见性问题彻底排除
+2. **`config->requests` 由 `setup.iova` 正确传给固件**（`r32-abi ... request_size=704` 证明 setup 被接受）
+3. 排除法名单再加一项，剩余面积继续缩小
+
+### 累计已排除（全部有实测或逐字节证据）
+
+电源域 ✅ / prod ✅ / MIPI 校准 ✅ / 传感器实测在流出 ✅ / 控制面 0x10 ✅ /
+csi5 三消息 R32 语义 ✅ / 描述符布局 ✅ / 内联 IOVA ✅ / GoS ✅ / capture_flags ✅ /
+CHANNEL_SETUP 填值 ✅ / **描述符可见性(dma_sync)** ✅
+
+### 下一轮最该做的一件事：**让 argus 真正跑起来**
+
+三次路线 A 尝试都没到内核，但**根本原因各不相同且都可修**：
+- `nvgstcapture` → GStreamer 编码器链（用 `--mode=1` 纯图像绕开）
+- `maincamera` → ROS2 lifecycle 节点，需 **ROS service 触发**才开流
+  （出厂栈起来时它本来就会被触发 —— 值得试：**门控武装后直接起整个栈**，
+   让出厂 camera_server 走它自己的正常流程）
+- argus RPC "Server already operational" → 需先确保没有残留 daemon
+
+**最省事的做法**：`echo 1 > r32_camera_power` + rtcpu rebind **之后**，
+直接 `systemctl start jp5-cyberdog-stack`，让出厂相机节点按它自己的设计跑。
+这既是最真实的验证，也绕开了所有手工触发的复杂度。
+⚠️ 红线仍在：不对 active 的 `camera_server` 调 configure —— 让它自己走。
