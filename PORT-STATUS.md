@@ -1991,3 +1991,32 @@ RCE 确实没观察到任何 VI 活动。
 > `Element not found` / `Mutex has not been initialized`（argus 自身状态乱）。
 > 判据：`vi_channel_mask=0x800000000` 才是正常那次。做实验要看这个值，
 > 别把偶发失败当成变体的结论。
+
+### 🆕 新仪器：RCE 自己的中断计数（`camrtc/irqstat`）
+
+`/sys/kernel/debug/camrtc/irqstat` 直接给出 **RCE 固件侧**的中断统计 ——
+这是之前一直没用过、也不依赖 trace 解码的一手证据：
+
+```
+Irq#  Count   Runtime  Max rt  Name
+  6    5077     5533     46    mbox
+ 23    4249    93590     79    vi-hp     ← VI 高优先级中断触发了 4249 次
+ 64       0        0      0    isp
+ 65       1        5      5    nvcsi
+```
+
+**这推翻了"接收侧什么都没发生"的直觉**：VI 硬件在持续给 RCE 产生中断
+（`vi-hp` 4249 次、累计 runtime 93.6 ms），而 `nvcsi` 只有 1 次、`isp` 0 次。
+
+⇒ 下一轮的靶心应转向：**RCE 收到这些 VI 中断后为什么不上报帧完成**
+（而不是继续找"为什么没数据"）。可用 `irqstat` 做采集前后的增量对比
+（注意 RCE 复位会把计数清零，前后快照必须在同一 RCE 会话内）。
+
+### ⚠️ 实验方法学：同一次开机内不能反复做
+
+实测：**成功的运行几乎都是重启后的第一次**。同一次开机内反复实验会累积坏状态，
+表现为 `vi_channel_mask` 回 `0x0`、argus 报 `Element not found` /
+`Mutex has not been initialized`（argus 自身状态乱），连续三轮全失败。
+
+**判据：`vi_channel_mask=0x800000000` 才是有效运行。**
+做变体对比时必须「一次重启 = 一次有效实验」，否则会把状态污染误判成变体结论。
