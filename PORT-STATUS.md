@@ -743,3 +743,43 @@ sudo NO_RECOVERY_IMG=1 ./flash.sh --no-systemimg -k APP \
 
 日志里会刷 `Abandoning IP address 192.168.55.100: pinged before offer`。
 不影响连接（静态地址照常工作，且重启后立即可用不用等 DHCP），记一笔备查。
+
+## ✅ 自动复活基础设施：`hung_task_panic=1`（2026-07-28，零内核零 DTB）
+
+机主要求**全自动、尽量不要人为干预**。为此先补上"挂死能自动变成可恢复事件"这一层。
+
+**关键推理**（不是猜的）：`softlockup_panic` 编译时就是 1
+（`CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC=y`，sysctl 实测为 1），而变体 B 炸掉时
+**并没有自己热重启**（4 分钟死寂）→ 说明它**不是** "CPU 卡在内核态不调度"，
+而是 **D 状态永久等待**（`wait_for_completion` / mutex 之类）→ 归 `hung_task` 检测器管，
+而 `hung_task_panic` 默认是 **0**。
+
+**已加到 `LABEL jp5` 的 APPEND**（备份 `extlinux.conf.pre-hungtask`）：
+```
+hung_task_panic=1 hung_task_timeout_secs=60
+```
+
+**验证生效的硬证据**：`CONFIG_BOOTPARAM_HUNG_TASK_PANIC is not set`（编译默认 **0**），
+而重启后 `sysctl kernel.hung_task_panic` = **1** → cmdline 确实被内核吃进去了。
+⚠️ `hung_task_timeout_secs` **没有** `__setup` 处理器（只是 sysctl），所以仍是默认 120s。
+对 probe 挂死检测够用，不必纠结。
+⚠️ dmesg 里这两个参数会出现在"传给 init 的环境变量"列表里，**这不代表没生效**
+（`earlycon`/`tegraid` 也在同一列表，它们显然是生效的）。
+
+**误报风险已评估**：6 次历史开机 + 本次，`INFO: task ... blocked` 实测命中 **0**；
+重启后 0 failed / 6-6 温区 / 0 oops / 0 panic。
+
+时序可行性：`hung_task_init()` 是 `subsys_initcall`(level 4)，驱动 probe 多在
+`device_initcall`(level 6) → **khungtaskd 先启动，抓得到 probe 阶段的 D 状态挂起**。
+
+### ⚠️ 但光有 panic 还不够（重要，别高估这一层）
+
+panic → 热重启 → **还是同一个坏内核** → 再 panic → **无限循环**，仍然要人来救。
+真正的无人干预还需要下一层：**危险代码必须发生在 initrd 之后**
+（那时 initrd 守卫已经把"下次用 good 内核"写下去了，热重启就会自动落回好内核）。
+
+**"把驱动编成模块来延后 probe"这条路已排除**：
+`TEGRA_CAMERA_RTCPU` 在 Kconfig 里是 **`bool`** 而非 `tristate`，只能 y/n，不能 m。
+
+→ 正解是**运行时开关**：驱动照常内建、probe 时不做任何危险操作，
+只注册一个默认关闭的开关；由 userspace 触发。挂死 → panic → 热重启 → 开关回到默认 0 → 自愈。
