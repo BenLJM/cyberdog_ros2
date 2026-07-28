@@ -922,3 +922,46 @@ R35 是把 `device-group.h` 的声明保留、定义删除 —— NVIDIA 通常*
 2. **"失联"和"挂死"从外面不可区分**，下结论前必须先排除可达性层的失败
    （模块、网络、gadget）。本轮两轮 RCM 救砖救的其实是"活着的狗"。
 3. 观察窗口被污染（笔记本 xHCI 猝死）时的结论要打上污染标记，不能与干净观察同权。
+
+## 🏆 R32 相机电源契约打通（2026-07-28，E2 = C2 内核 + A DTB）
+
+**AI 头顶相机线的分水岭时刻。** 0726 NOTES 定性的根因——「ve/ispa 域下零设备、永久断电、
+R32 固件假定内核已上电」——**已被完整解决，且全程零炸机**。
+
+### 实测证据链（一次受保护实验跑完）
+
+| 步骤 | 结果 |
+|---|---|
+| E2 启动（C2 内核 + A DTB，开关默认关） | ✅ 正常启动，36 模块，0 failed |
+| genpd 拓扑 | **ve 域下挂上 nvcsi/vi-thi/vi，ispa 域下挂上 isp**（此前永远是空的） |
+| `echo 1 > r32_camera_power` + rtcpu unbind/rebind | ✅ 存活 |
+| `r32-power: group_busy` → | **`ve=1 ispa=1`，genpd `ve on / ispa on`** —— 域真的上电了 |
+| `r32-power: group_reset`（deassert 前，R32 时序） | ✅ |
+| RCE 握手 | **`cmd=5` 成功**（域上电状态下） |
+| 崩溃指纹 | **oops=0 / rce-noc=0 / smmu=0** |
+
+### 关键定性
+
+**同样的调用，boot-time probe 会挂死（kernel-E 实证），运行时执行完美工作。**
+门控设计让我们根本不需要 boot-time 上电：相机要用时运行时武装即可。
+kernel-E 的 boot-time 挂死从「必须攻克的墙」降级为「不需要走的路」。
+
+### 现在内核侧拼图已全齐（当前运行中的 E2 内核）
+
+legacy hsp ✅ / diag@5 disabled ✅ / nvmap handle-as-fd ✅ / R32 采集 ABI ✅（`r32-abi` 断言在 Image 里）
+/ **R32 电源契约（运行时门控）✅**
+
+**下一堵墙**：真采集（argus）——上次死在 `rce-noc Host read timeout at 0x15a303cc`，
+那是在域断电时读 NVCSI 的必然结果。现在域能上电，该读应落在活硅片上。
+若通过则进 NOTES §6 Stage 2（prod settings + MIPI 校准）。
+
+### 实验脚本的已知小缺陷（下版修）
+
+restore 顺序错了：先 `param=0` 再 unbind → suspend 路径的 `group_idle` 被门挡掉 →
+busy 引用泄漏 → 实验结束后 ve/ispa 停在 on（无害，重启即清；正确顺序是先 unbind 再关 param）。
+
+## 🤖 一次性实验机制（jp5-exp）已实战验证 —— 本轮全部实验的基座
+
+`jp5-exp arm <Image> [DTB]` → reboot → initrd-exp 在 T+15.5s 把 DEFAULT 拨回 jp5（一次性消费）。
+好路径三件套（Image/DTB/initrd）**永不被碰**。已连续三轮实战（good 验证轮 / C2 / E2）零故障。
+挂死代价从「两次拔电 + 4 分钟 RCM」降到「一次拔电」；本轮三次实验实际人工干预 = **零**。

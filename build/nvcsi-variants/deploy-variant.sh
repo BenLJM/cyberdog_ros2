@@ -25,7 +25,7 @@ STAGE=/tmp/nvcsi-variants
 EXPECT_A_DTB=dd9a7350406abd0ab64a3634c647f079740b1ac81f9551ca42698efc7ada88b3
 EXPECT_B_IMG=bdf077cf39673adb237452413bab26795bb1eb1157a9fbffe3c5e6c45493bdcc
 # 变体 C = 0002 + 运行时开关版 0003（默认关），故意不含 0004
-EXPECT_C_IMG=8bc45ee7f8d4fd1ffd942b1620854e1502168bebf4bc6174c3f099c4b8a7e21c
+EXPECT_C_IMG=f4693ce5c0baf619173acfbd51da23dfe83a77639a79fee1b7715d02a8fc47e2  # C2: 修 LOCALVERSION 后重建
 
 mount | grep -q "$P1" || { mkdir -p $P1; mount /dev/mmcblk0p1 $P1; }
 

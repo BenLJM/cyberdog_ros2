@@ -76,6 +76,10 @@ done
 echo "  （nvcsilp 应为 0 —— 变体 C 故意不含 0004）"
 ls -l "$DEST/Image" | awk '{print "  产物: "$5" 字节"}'
 # 版本串断言：错了必须响亮失败，不能等部署后变成"幽灵失联"
-strings -a "$DEST/Image" | grep -m1 "Linux version 5.10.216-tegra " \
+# ⚠️ 不能写成 `strings | grep -m1 ... ||`：pipefail 下 grep -m1 提前退出会给
+# strings 发 SIGPIPE(141)，管道整体报错 → 断言在版本串正确时也会误杀。
+VER=$(strings -a "$DEST/Image" | grep -m1 "Linux version" || true)
+echo "  版本串: $VER"
+echo "$VER" | grep -q "5.10.216-tegra " \
     || { echo "FATAL: 版本串不是 5.10.216-tegra！LOCALVERSION 又丢了"; exit 1; }
 sha256sum "$DEST/Image" | tee "$DEST/SHA256SUMS"
