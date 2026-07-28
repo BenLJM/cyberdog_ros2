@@ -2199,3 +2199,36 @@ R32 上 NVCSI 会在会话间掉电、每次采集前重跑一遍。stage20 在 
 实测 `r32-recal: pad+cal rerun rc=0`。
 
 **两者都是与 R32 对齐的真实修正，但仍然零帧。**
+
+### ✅ 逐函数比对完成：内核侧对 R32 的还原已经**完整**
+
+拿 `/work/r32-reference/` 里的 R32.5.2 官方源与本树逐文件比对（列出「R32 调用而
+R35 不调用」的函数，再逐个判定）：
+
+| 文件 | R32 独有的动作 | 覆盖情况 |
+|---|---|---|
+| `camera/nvcsi/csi5_fops.c` | `csi5_phy_write` / `writel` / `tegra_mipi_calibration` / `tegra_capture_ivc_control_submit` | stage3 + stage6 + **stage19** ✅ |
+| `video/tegra/host/nvcsi/nvcsi-t194.c` | prod / 校准 / `host1x_writel`(cil_sw_reset) | stage2 ✅；`cil_sw_reset` 只在 `TEGRA_MIPI_IOCTL_*` 路径被调，正常采集流程不经过 |
+| `camera/vi/capture.c` → `fusa-capture/capture-vi.c` | 仅 `nvhost_eventlib_log_submit` / `speculation_barrier` / `wait_for_completion` | **无任何硬件初始化动作** ✅ |
+| `mipical/mipi_cal.c` | t19x soc ops | stage7 ✅ —— 且已核实 R32 的 `_tegra_mipi_bias_pad_enable` 与 R35 的 `_t18x_tegra_mipi_bias_pad_enable` **逐字节相同**（只是改了名）；唯一真差异是 R32 的 `.cil_sw_reset = NULL`，而它是 ioctl-only，无影响 |
+| `camera/csi/csi.c` | 仅 `read_pixel_clk_from_dt` / `read_discontinuous_clk_from_dt` 两个 DT 读取 helper | 与硬件无关 ✅ |
+| DTB prod-settings | `mipical`: `prod` / `prod_c_cphy_csi` / `prod_c_dphy_csi`；`nvcsi`: `prod` / `prod_c_cphy_mode` / `prod_c_dphy_mode` | **两处都齐全且命名正确** ✅ |
+
+**结论：内核侧已经忠实还原了 R32 的全部行为，相机仍然零帧。**
+
+### 这把问题推到了内核之外
+
+到此为止，可以有把握地说：**问题不在内核**。剩下的可能性只有两类：
+
+1. **R32 RCE 固件需要某个我们无法从 R35 内核提供的前置条件**。
+   已知固件本身工作正常：接受全部 CSI 配置（`result=0`，且会拒绝
+   `DUMPREGS` 回 `1`，证明它在真判断）、`vi5_hwinit` 握手正常、
+   持续产生 VI 中断（Δ=413）。但它就是不让 NVCSI 进入接收态。
+2. **板级/硬件差异** —— 例如某个电源域、复位、或 pinmux 由 JP4 的
+   **引导器（cboot/MB2）**建立，而 JP5 的引导链没做。
+   注意本工程一直跑的是 **R32 引导器 + R35 内核**的混血配置，
+   引导器侧从未被审计过。
+
+**下一轮建议从第 2 条切入**：对比 JP4 与 JP5 启动后
+（相机相关的）电源域 / reset / pinmux 寄存器状态。
+JP4 是可启动的（双系统），可以直接开进 JP4 抓一份基线再回来比。
