@@ -2098,6 +2098,10 @@ r32-resp: PHY_STREAM        result=0 (0=OK) trans_id=71
 1. **PHY/CIL 链路状态寄存器**（`CSI5_PHY_OFFSET = 0x010000` 那一族）——
    stage15 的 dump 偏移取错了（读到的是数据类型配置表）。需要 T194 的 NVCSI
    寄存器映射，树里没有，可能要从 R32 内核源或 TRM 找。
-2. **R32 固件在 PHY 上电/使能上是否还有一步没做** —— 比如 `PHY_STREAM_RESET`、
-   或 `NVCSI_IOCTL_DESKEW_SETUP/APPLY`（用户态 ioctl，argus 在 R32 上可能会调，
-   而我们的 R32 argus 没调 —— 值得用 strace 核一遍它有没有开 `/dev/nvhost-nvcsi`）。
+2. **R32 固件在 PHY 上电/使能上是否还有一步没做**。
+   已顺手排除两项：
+   · `PHY_STREAM_OPEN` 的第三个字段 `phy_type` —— stage3 没显式填，但
+     `NVPHY_TYPE_CSI = 0`，memset 后的 0 **恰好就是正确值**；
+   · deskew（`NVCSI_IOCTL_DESKEW_SETUP/APPLY`）—— 只在 lane 速率 >1.5 Gbps 时需要，
+     本机 1.12 Gbps 用不上。
+   剩下的候选是 `PHY_STREAM_RESET` 之类的显式复位序列。
