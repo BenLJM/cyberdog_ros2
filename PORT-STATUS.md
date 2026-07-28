@@ -2105,3 +2105,34 @@ r32-resp: PHY_STREAM        result=0 (0=OK) trans_id=71
    · deskew（`NVCSI_IOCTL_DESKEW_SETUP/APPLY`）—— 只在 lane 速率 >1.5 Gbps 时需要，
      本机 1.12 Gbps 用不上。
    剩下的候选是 `PHY_STREAM_RESET` 之类的显式复位序列。
+
+### stage17：`PHY_DUMPREGS` 被固件拒绝（`result=1`）—— 但这是个有价值的反证
+
+R32 消息集里有 `CAPTURE_PHY_STREAM_DUMPREGS_REQ (0x3C)`，应答只回 `result`、
+寄存器内容由固件打进自己的日志 —— 本来是绕开「本树没有 T194 NVCSI 寄存器映射」
+的完美工具。实测：
+
+```
+r32-resp: PHY_DUMPREGS      result=1   ← 被拒
+r32-resp: STREAM_SET_CONFIG result=0   ← 接受
+r32-resp: PHY_STREAM        result=0   ← 接受
+```
+
+**这台固件没实现 DUMPREGS。** 但它同时构成一个有力的反证：
+**RCE 是会区分的** —— 对能处理的命令回 0、对不能处理的回 1。
+⇒ 之前那些 `result=0` 是**真正的接受**，不是笼统返回。CSI 配置确实被固件吃下去了。
+
+### 本轮结束时的状态
+
+软件可控的每一项都已逐条验证正确，RCE 也确认接受了配置，
+**NVCSI 依然在链路层完全静默**（中断 Δ=0，而 VI 有 Δ=413 的超时中断）。
+
+已排除的（本轮新增）：`phy_type`（`NVPHY_TYPE_CSI=0`，memset 后恰好正确）、
+deskew（只在 >1.5 Gbps 需要，本机 1.12 Gbps）、
+CSI 消息未被处理（六条 `result=0`，且与 DUMPREGS 的 `result=1` 形成对照）。
+
+**唯一还没试过的东西**：`CAPTURE_PHY_STREAM_RESET_REQ (0x3A)` —— 上游内核
+从不使用它，但 R32 固件里有。若 R32 期待在 open 之前先 reset PHY，
+这就是最后一块缺失的拼图。**下一轮第一件事就试它**（改动极小：在
+`csi5_stream_open_r32()` 里 open 之前插一条 RESET，用现成的
+`r32_csi_submit_wait()` 发，看返回码）。
