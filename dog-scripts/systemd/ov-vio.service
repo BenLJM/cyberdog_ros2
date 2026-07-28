@@ -31,12 +31,22 @@ ExecStartPost=/usr/local/bin/ov-vio-activate.sh
 # `systemctl stop ov-vio` 就能把深度质量原样还回去, 不留暗状态。
 ExecStopPost=/usr/local/bin/ov-vio-emitter.sh 1
 
-Restart=on-failure
+# 🔴 必须是 always, 不能是 on-failure。
+# 2026-07-28 实测：VIO 起来并 activate 成功之后, 约 2 分钟自己退出了
+# (journal: `ov-vio.service: Succeeded.` 紧跟着 ExecStopPost 把发射器还原成 1)。
+# 因为退出码落在「成功」区间(0 或 SuccessExitStatus=143), `on-failure` **不会重启**,
+# 于是 VIO 就永远躺平了 —— 而外部看到的现象只是「emitter_enabled 莫名其妙变回 1」,
+# 极难联想到是 VIO 没了。
+# 根因未查清(栈的日志把现场淹了), 但不论什么原因, 一个纯感知的常驻服务
+# 都不该「安静地消失且永不回来」。always + 下面的限流是正确的兜底。
+Restart=always
 RestartSec=20
 # 78 = 缺文件/缺包, 重试无意义 -> 躺平等人
 RestartPreventExitStatus=78
 # 143 = 128+SIGTERM, 正常停机(含经 PartOf 传播的栈 stop)就是这么退的,
 # 不声明的话每次正常停机都会落 failed 态, 误导哨兵和人。
+# 注意: 有了 Restart=always, 这一条只影响「落不落 failed 态」, 不再影响「重不重启」——
+# `systemctl stop` 和 PartOf 传播的 stop 本来就不会被 Restart=always 拉起来。
 SuccessExitStatus=143
 
 KillMode=control-group

@@ -687,3 +687,59 @@ autoconnect），重启后自动上线，不用再手工配地址。
 
 ⏸️ 待机主用显示器验证。如果成立，这是「不能拆机、没有调试排针」这个死局的实际解法。
 局限：只能人眼看/拍照，无法自动落盘归档。
+
+## ✅ RCM 救砖实战复盘（2026-07-28，变体 B 炸机后）
+
+**完整流程（已跑通，可照抄）**：
+
+```bash
+# 前置：拔适配器断电(USB 保持插着) → 重新上电 → lsusb 出现 0955:7e19，且 Device 号必须变
+cd ~/cyberdog-flash/xiaomi-sdk
+
+# ① 读出 APP 分区（约 100s，产出 Android 稀疏镜像 ~444MB）
+sudo NO_RECOVERY_IMG=1 ./flash.sh --no-systemimg -k APP \
+     -G ~/cyberdog-flash/APP-current.img jetson-xavier-nx-athena mmcblk0p1
+
+# ② 稀疏 → raw，挂载，外科式只改要改的
+sudo simg2img ~/cyberdog-flash/APP-current.img ~/cyberdog-flash/APP-current.raw
+sudo mount -o loop ~/cyberdog-flash/APP-current.raw /mnt/appcur
+sudo cp /mnt/appcur/boot-jp5/Image /mnt/appcur/boot-jp5/Image.failed-variantB   # 坏的留档
+sudo cp /mnt/appcur/boot-jp5/Image.pre-variant /mnt/appcur/boot-jp5/Image       # good 换回
+sudo umount /mnt/appcur
+
+# ③ 🔴 必须再断电一次重进 RCM（见下），然后立刻写回（约 111s，会自动 coldboot）
+sudo NO_RECOVERY_IMG=1 ./flash.sh --no-systemimg -k APP \
+     --image ~/cyberdog-flash/APP-current.raw jetson-xavier-nx-athena mmcblk0p1
+```
+
+### 🔴 四个实测确认的坑
+
+1. **RCM 会话是一次性的，读操作会把它用掉。**
+   读完直接写会报 `Error: probing the target board failed`，而此时 `lsusb` **仍然显示 `0955:7e19`**。
+   判据只能看 **Device 号变没变**（本轮：008 读 → 写失败 → 断电 → 010 写成功）。
+2. **`-G` 产出的是 Android 稀疏镜像**（魔数 `3aff26ed`，444MB），**不能直接 mount**，
+   必须先 `simg2img` 转成 1.5GB raw。写回用 `--image <raw>` 即可（flash.sh 自己处理）。
+3. **真刷写树是 `~/cyberdog-flash/xiaomi-sdk`**（550MB，工具齐全）。
+   同目录的 `Linux_for_Tegra` 只剩 `bootloader/pyfdt`，是**残骸**。
+   ⛔ 笔记本上还有 `JetPack_6.2.2_..._ORIN_NANO_TARGETS` —— **那是 Orin Nano 的，绝不能用在 CyberDog 上**。
+4. **0726 的 `APP-raw.img` 不能直接写回**：其 `boot-jp5/Image` 是 `f4b6a035`（r32cap 批次），
+   `extlinux.conf` 里 **ramoops 计数为 0**。写回会丢掉黑匣子 + 触摸板批次。必须走"读→改→写"。
+
+**结果**：Image 恢复 `b082b8ea`、DTB 全程未动 `2228d7ab`、ramoops 配置保留、
+坏的留档为 `Image.failed-variantB`。开机后 **0 failed / 6-6 温区 / 37 节点 /
+相机 30.4Hz / 传感器 10.0+25.1Hz / eth0 5088 pkt/s**，WiFi 也自己回来了。
+
+## 🔴 `ov-vio.service` 必须 `Restart=always`（已修）
+
+实测：VIO 起来并 activate 成功后约 2 分钟**自己退出**，journal 里是
+`ov-vio.service: Succeeded.` 紧跟 ExecStopPost 把发射器还原成 1。
+因为退出码落在"成功"区间（0 或 `SuccessExitStatus=143`），**`Restart=on-failure` 不会重启** —— VIO 就永远躺平了。
+
+⚠️ **外部可见的现象只是「`emitter_enabled` 莫名其妙变回 1」**，极难联想到是 VIO 没了。
+根因未查清（栈的日志把现场淹了），但一个纯感知的常驻服务不该"安静消失且永不回来"。
+已改 `Restart=always`（配 `StartLimitBurst=5/900s` 限流兜底）。
+
+## ℹ️ 小坑：狗上跑着 dhcpd，与手工静态 192.168.55.100 冲突
+
+日志里会刷 `Abandoning IP address 192.168.55.100: pinged before offer`。
+不影响连接（静态地址照常工作，且重启后立即可用不用等 DHCP），记一笔备查。
