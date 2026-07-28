@@ -1805,3 +1805,38 @@ CSI/CIL 配置**：R32 固件期待的字段布局/语义与 R35 argus 填的是
 
 产物：`build/stage6-csi5-mipical.py`、`stage7-mipical-t194.py`、`stage8-settletime.py`，
 以及 `build-variant-{K,L,M}.sh`（断言均已扩展，DTB 复核新增"出厂 badge×3 + module0=主相机"两项）。
+
+### 续：stage9/10/11 —— 把 R32 缺失的 CSI 配置链补齐（仍零帧）
+
+顺着"R35 把 csi_stream 塞进 CAPTURE_CHANNEL_SETUP、R32 没有这个字段"这条线补下去：
+
+| stage | 做了什么 | 实测结果 |
+|---|---|---|
+| 9 | 内核主动 `tegra_csi_start_streaming()` | 消息真的发出去了：`stream=4 port=4 lanes=4 mipi=448000kHz`。**但引入回归**：ISP 通道建立超时 |
+| 10 | settle time 补算挪到 stage3 的 R32 路径 | `settle=19`（主相机）/ `28`（鱼眼）—— 与公式预测完全一致 |
+| 11 | 把 CSI 流启动挪到 **VI 通道建立之后** | ISP 回归消失，传感器恢复出流 |
+
+> stage8 打在了上游的 R35 版 `csi5_stream_set_config` 上，而实际发消息的是 stage3
+> 自建的 R32 版函数 —— 所以它一直是死代码（`settle=0` 且没有任何 `r32-settle` 输出）。
+> stage9 让消息真的发出去之后才暴露出来，stage10 才补对位置。
+>
+> stage9 的回归很有信息量：在**采集通道还不存在**时就用 `R32_TEMP_CHANNEL_ID` 发
+> CSI 消息，会让 RCE 进入一个后续 ISP 通道建立必然超时的状态 ——
+> **R32 的真实顺序是「先建采集通道、再开 CSI 流」**。
+
+至此整条链每一环都已验证正确：
+
+```
+传感器 streaming(i2c 0x01) ✅   MIPI 校准成功 ✅
+CSI 配置 stream=4/port=4/lanes=4/settle=19/mipi=448000kHz ✅（且在通道建立之后）
+ISP 通道 ✅   VI 通道 ✅   RCE 握手 ✅   描述符下发 ✅
+```
+
+**仍然零帧**（`vinotify_event=0` / `nvcsi_intr=0` / `vi capture get status failed`）。
+
+### 踩到的两个工程坑（都记账）
+
+- **`-Werror=declaration-after-statement`**：把语句插在 `unsigned int x = f();` 之后，
+  而后面还有声明 —— 项目内第二次踩。注入器要挑「声明区之后的第一条语句」当锚点。
+- **子串重叠导致断言误判**：`"\t\tfoo();\n"` 包含 `"\tfoo();\n"`，
+  先删单 tab 版会数出 2 次。**缩进不同的同名锚点必须从最长的先删**。
