@@ -1935,3 +1935,31 @@ desc->ch_cfg.match.vc     = (1u << chan->virtual_channel); /* one-hot bit encodi
 全量事件统计：只有 6 个 `rtcpu_string` + 1 个 `rtcpu_start`，
 **未知类型事件 0 个** ⇒ 解码器没在丢记录，「三计数全 0」是真的 ——
 RCE 确实没观察到任何 VI 活动。
+
+> **补充排除**：`nvcsi` 停在 314 MHz **不是 bug**。BPMP 层面
+> `/sys/kernel/debug/bpmp/debug/clk/nvcsi/max_rate = 314000000` ——
+> 314 MHz 就是这颗片子上该时钟的硬上限，0004 请求 400 MHz 被钳到 314 是正确行为
+> （R32 当年在同一颗片子上也会被钳）。这条线索作废。
+
+### 当前状态小结（2026-07-29 收尾）
+
+**全部已验证正确 / 已排除**（每项都有逐字节、寄存器直读或 ftrace 实测证据）：
+
+| 层 | 证据 |
+|---|---|
+| 传感器发射 | I2C 直读：chip_id `0x560D`、4208×3120、HTS×4=4704 与 DT 一致、`mode_select=0x01` |
+| MIPI 校准 | stage6+7 之后真执行且 `tegra_mipi_wait` 返回 0 |
+| CIL 低功耗时钟 | 补丁 0004：`nvcsilp enable_cnt` 0 → 2 |
+| NVCSI 数据路时钟 | 314 MHz = BPMP 硬上限，正确 |
+| CSI 流配置 | `stream=4 port=4 lanes=4 settle=19 mipi=448000kHz`，且在通道建立之后下发 |
+| VI 包匹配 | `dt=0x2b/0x3f stream=16(1<<4) vc=1(1<<0)` —— one-hot 编码，全对 |
+| 描述符 | 布局逐字节核过；IOVA 由 argus 自己填（stage4 是死代码）；`r32-sync` 生效 |
+| 消息 ABI | CIL/brick 结构体两代逐字段相同；CSI 消息 ID 相同 |
+| RCE | 握手成功（`CL2018101701 v2.2`）；trace 解码正常（未知类型事件 0） |
+
+**仍然零帧。** RCE 确实没观察到任何 VI 活动。
+
+**下一轮最该做的**：把 stage12 的 NVCSI 寄存器 dump 重做一遍（`debugfs_create_file`
+挪到 **probe**，别挂在 `finalize_poweron` 那条被计时的握手路径上），
+直接读 CIL 的链路状态寄存器 —— 这是唯一还没拿到的一手证据：
+**接收端到底有没有在物理层看到任何跳变**。
