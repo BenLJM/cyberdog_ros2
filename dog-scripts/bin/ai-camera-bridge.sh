@@ -41,7 +41,14 @@ fi
 # --- 前置存在性检查(缺件直接 78) ----------------------------------------------
 [ -x "$CHROOT$INNER" ] || { log "FATAL missing $CHROOT$INNER"; exit 78; }
 [ -f "$CHROOT$NODE" ]  || { log "FATAL missing $CHROOT$NODE";  exit 78; }
-[ -e "$GATE" ]         || { log "FATAL missing $GATE —— 跑的不是带 r32 相机补丁的内核"; exit 78; }
+# ⚠️ 门控不存在 = 当前内核没带 r32 相机补丁(比如 DEFAULT 的 good 内核)。
+# 这不是故障, 是"这个内核上没这功能" —— 干净 exit 0 让 unit 落在 inactive,
+# 而不是 78 留一个永久 failed 单元去污染健康检查。
+if [ ! -e "$GATE" ]; then
+  log "当前内核没有 $GATE —— 不带 r32 相机补丁, AI 相机桥在此内核上无法运行。"
+  log "要用 AI 相机需把带补丁的变体(当前是 AC)转正为 DEFAULT, 这是机主的决定。"
+  exit 0
+fi
 
 # --- 武装 r32 相机门控 --------------------------------------------------------
 # 所有危险行为(电源域/prod/校准/CSI 开流)都关在这个门控后面, 默认关闭 = boot 行为
