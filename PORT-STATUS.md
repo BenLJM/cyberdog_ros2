@@ -1181,3 +1181,43 @@ R32: return syncpt_unit_interface->start + SYNCPT_SIZE * id;
 **下一轮起手式**：核对 `capture_template` 里 `capture_flags` 的实际值，
 以及 R32 固件对 `CAPTURE_FLAG_STATUS_REPORT_ENABLE` / `CAPTURE_FLAG_ERROR_REPORT_ENABLE` 的依赖。
 这两个标志在 R32 头里就定义在 `capture_descriptor.capture_flags` 上，位置已知（+4）。
+
+## 🔬 `capture_flags` 也排除 —— 三候选清空，范围收敛到 setup 消息本身（2026-07-28 收尾）
+
+`capture_template` 两代**逐字节相同**（连注释都一样）：
+```c
+.capture_flags = 0 | CAPTURE_FLAG_STATUS_REPORT_ENABLE | CAPTURE_FLAG_ERROR_REPORT_ENABLE,
+.ch_cfg = { .pixfmt_enable = 0, .match = { .stream=0, .stream_mask=0x3f,
+                                           .vc=(1u<<0), .vc_mask=0xffff } },
+```
+→ 状态上报**已经**是开的，「做了但不报」的假说不成立。
+
+### 本轮三候选全部排除
+
+| 候选 | 结论 |
+|---|---|
+| syncpoint / GoS | ❌ R32 自己也容忍 GoS 无效；shim 地址两代同构 |
+| `capture_flags` | ❌ 模板两代逐字节相同，状态/错误上报都已开启 |
+| flags 位域 | ⚠️ 差异存在（R35 删 `fmlite_enable`、`compand` 从 bit13→bit12），但当前路径两位都是 0，**无实际影响** |
+
+### 已彻底排除的层（累计，全部有实测或逐字节证据）
+
+电源域 ✅ / prod ✅ / MIPI 校准 ✅ / 传感器流出 ✅ / 控制面 0x10 ✅ /
+csi5 三消息 R32 语义 ✅ / 描述符布局（704・ch_cfg@64・status@624・atomp@104）✅ /
+内联 IOVA ✅ / GoS ✅ / capture_flags ✅
+
+### 下一轮的精确起手式：`CAPTURE_CHANNEL_SETUP_REQ` 的**载荷内容**
+
+布局已由 `static_assert(capture_channel_config==216)` 锁住，但**填值**没人核对过。
+R35 的 `vi_capture_setup()` 里有一段明显是 R35-only 的：
+```c
+config->requests_memoryinfo = capture->requests_memoryinfo_iova;   /* R32 没有这个字段语义 */
+config->request_memoryinfo_size = ...;
+```
+在 R32 的 216 字节布局里，这两个 u64/u32 写进去的是**别的字段的位置** ——
+很可能覆盖了 R32 期望的 `requests`（描述符环 IOVA）或 `queue_depth`/`request_size`。
+
+**下一轮第一件事**：把 R32 `capture_channel_config` 与 R35 的填值代码逐字段对照，
+特别是 `requests` / `request_size` / `queue_depth` / `channel_flags` 四项，
+并在 `vi_capture_setup` 里加 `dev_info` 打印实际提交值。
+判据不变：`/tmp/frames.raw > 0`。
