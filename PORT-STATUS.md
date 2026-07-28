@@ -2237,3 +2237,30 @@ JP4 是可启动的（双系统），可以直接开进 JP4 抓一份基线再�
 > 三张表长度一致（`prod`=112 / `prod_c_cphy_mode`=160 / `prod_c_dphy_mode`=32 个 u32），
 > 首 8 个值 `00011018 00070000 00020000 … 0001109c e000e000 c000c000` 逐字节吻合。
 > ⇒ stage2 写进 NVCSI 的寄存器值与出厂完全一致。
+
+### stage21：DTB 逐节点比对，补回三处缺失属性（仍零帧）
+
+内核侧比对完毕后转去比 DTB：把出厂 `tegra194-mi-k91.dtb` 与运行时
+`/proc/device-tree` 的**属性集合**逐节点做差。
+
+| 节点 | 出厂有、我们缺 | 出厂值 |
+|---|---|---|
+| `nvcsi@15a00000` | `interrupts` | `<0x00 0x77 0x04>` |
+| `nvcsi@15a00000` | `num-ports` | `<0x06>` |
+| `isp@14800000` | `reg` | `<0x00 0x14800000 0x00 0x10000>` |
+
+ISP 的 `reg` 与当年 nvcsi 的情况完全平行 —— R35 因为「RCE 自己管」删掉 MMIO 窗口，
+stage2 补回了 nvcsi 的，**没人补 ISP 的**。三条全部补回（变体 AA），**仍然零帧**。
+
+同时核实为**一致**的（都逐字节比过）：
+`clocks` / `resets` / `power-domains` / `prod`（三张表 112/160/32 个 u32）/
+`rtcpu` 的 `nvidia,camera-devices`（指向 isp/vi/nvcsi 三个设备）。
+
+### 另：用 R32 源反证了 stage3 是忠实的
+
+R32 原版的 `csi5_stream_set_config()` 与 stage3 实现**逐行一致** ——
+包括 `error_config` 就是不设（memset 后为零）、`channel_id` 用硬编码的
+`TEMP_CHANNEL_ID`、以及 fire-and-forget（不等应答）。
+⇒ 之前怀疑「error_config 全零屏蔽了错误上报」是**误判**，R32 本来就这样。
+（stage16 改成申请 trans_id 反而偏离了 R32；它作为诊断手段有价值，
+ 但不应进最终件 —— 变体 Z/AA 都没带它。）
