@@ -1221,3 +1221,54 @@ config->request_memoryinfo_size = ...;
 特别是 `requests` / `request_size` / `queue_depth` / `channel_flags` 四项，
 并在 `vi_capture_setup` 里加 `dev_info` 打印实际提交值。
 判据不变：`/tmp/frames.raw > 0`。
+
+## 🔑 关键发现：我一直在测**错误的路径**（2026-07-28 最终收敛）
+
+### backport 的填值处理是完备的（我上一轮的推断作废）
+
+`0002` 补丁把**每一个** R35-only 字段都用 `#if !IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)` 排掉了：
+`requests_memoryinfo` / `request_memoryinfo_size` / `vi2_channel_mask` / `vi_unit_id` /
+`csi_stream.*` / `stop_on_error_notify_bits` —— 一个不漏。
+→ **CHANNEL_SETUP 载荷填值没有问题**，上一节的怀疑不成立。
+
+### 真正的原因：reloc pass 只挂在 ioctl 路径上
+
+```c
+/* 0002 补丁：VI_CAPTURE_REQUEST ioctl 分支 */
+#if IS_ENABLED(CONFIG_TEGRA_CAPTURE_R32_ABI)
+        err = r32_reloc_vi_capture_request_buffers_locked(chan, &req, request_unpins);
+#else
+        err = pin_vi_capture_request_buffers_locked(chan, &req, request_unpins);
+#endif
+```
+
+这条路径是 **`VI_CAPTURE_REQUEST` ioctl** —— 也就是 chroot 里 **argus / nvargus-daemon** 走的路。
+
+而我这一整天用的 `v4l2-ctl` 走的是**内核内部**路径：
+```
+vi5_capture_enqueue() → vi5_setup_surface() → vi_capture_request()
+```
+**完全不经过那个 ioctl，因此 reloc pass 从未执行过。**
+
+R32 固件要求内核在提交前把描述符里的相对偏移就地重定位成真实 IOVA
+（这正是 0725 记录的 "R32=reloc（内核就地打补丁 IOVA）" 范式）。
+v4l2 路径下这一步没人做 → 固件拿到未重定位的描述符 → 静默等待 → 2500ms 超时。
+**与实测的「零 VINOTIFY、零异常、纯超时」完全自洽。**
+
+### 这也解释了变体 I 为何"修对了却没用"
+
+stage4 补的 `atomp.surface[0].offset` 是**必要但不充分**的：
+它只补了一个字段，而 R32 范式要求的是**整个描述符的 reloc 遍历**（backport 已实现，只是没挂到 v4l2 路径）。
+
+### 下一轮的两条路（都是低风险，工具链现成）
+
+**路线 A（推荐，工作量小）**：用**真正的目标用户态**验证 ——
+chroot 里的 argus/nvargus 本来就走 ioctl 路径，reloc pass 会自动生效。
+这也是这个工程**真正要支持的场景**（出厂 ROS2 相机节点用的就是 argus）。
+做法：`systemctl start nvargus-daemon`（NOTES §7.3 的步骤 6），跑一次采集。
+⚠️ 红线：别对 active 的 `camera_server` 调 configure。
+
+**路线 B**：把 reloc pass 也挂到 `vi_capture_request()` 内核内部路径，让 v4l2 直采也能用。
+工作量中等，价值是多一条不依赖 chroot 的验证途径。
+
+**先做 A** —— 它可能直接出图，而且是真实目标场景。
