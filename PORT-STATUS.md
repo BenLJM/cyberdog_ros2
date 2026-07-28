@@ -965,3 +965,37 @@ busy 引用泄漏 → 实验结束后 ve/ispa 停在 on（无害，重启即清�
 `jp5-exp arm <Image> [DTB]` → reboot → initrd-exp 在 T+15.5s 把 DEFAULT 拨回 jp5（一次性消费）。
 好路径三件套（Image/DTB/initrd）**永不被碰**。已连续三轮实战（good 验证轮 / C2 / E2）零故障。
 挂死代价从「两次拔电 + 4 分钟 RCM」降到「一次拔电」；本轮三次实验实际人工干预 = **零**。
+
+## 🏆🏆 采集控制面全通：`0x10 setup accepted` ×19，rce-noc 墙倒了（2026-07-28）
+
+同一会话第二个历史性节点。域上电状态下打 V4L2 直采（`v4l2-ctl /dev/video0` ov7251 640x480 BG10）：
+
+| 判据 | 结果 |
+|---|---|
+| **`r32-abi: VI channel setup accepted`**（NOTES §7.4 定义的胜负手） | **出现 ×19**（历史上从未出现过） |
+| `rce-noc Host read timeout at 0x15a303cc`（0726 的死墙） | **0 次 —— 墙倒了** |
+| oops / smmu fault / RTCPU gone bad | 0 / 0 / 0 |
+| v4l2-ctl | 全程存活，错误恢复路径（`err_rec: successfully reset`）也正常工作 |
+
+**定性**：R32 固件接受了 R35 内核（经 r32-capture-backport 翻译）发出的
+`CAPTURE_CHANNEL_SETUP_REQ (0x10)` —— **采集控制面已通**。
+0725 定案的「三堵原理性 ABI 墙」中的消息号墙、结构布局墙实测已被 backport 攻克。
+
+**剩下的是数据面（零帧）**，症状与 NOTES §6 Stage 2 的预言精确吻合：
+```
+csi5_stream_open: VI channel not found for stream-0 vc-0
+uncorr_err: request timed out after 2500 ms        ← 通道建好了，等不到帧
+```
+两个候选（按可能性排序）：
+1. **Stage 2 缺失**：R32 内核在 RCE 上电后还做 nvcsi prod settings + `tegra_csi_mipi_calibrate()`，
+   现在没人做 → PHY 不锁 → 传感器数据进不来。回移路径 NOTES §6 已写好
+   （`nvcsi-t194.c` 的 ioremap + prod_list + apply thread；DT 给 `&nvcsi` 加回 `reg`）。
+2. `csi5_stream_open: VI channel not found` —— stream↔channel 绑定的 R32/R35 缝，
+   可能要看 `csi5_fops.c` 的 stream open 消息路径。
+
+**实验基座已完全成熟**：jp5-exp 一次性机制 + 运行时门控 + kmsg 面包屑 + hung_task_panic 兜底，
+本轮五次内核实验（good 验证 / C2 / E2 / 电源实验 / 采集实验）**人工干预总计 = 零**。
+
+⚠️ 已知小尾巴：实验结束后 ve/ispa 停在 on（采集错误路径泄漏了 busy 引用），无害，重启即清。
+⚠️ E2 组合（C2 内核 + A DTB）目前只存在于 exp 入口；good 路径未动。
+   **要不要把它转正成默认内核，需机主拍板**（转正 = AI 相机能力常驻 + 这套内核已被今天五轮实验反复锤过）。
