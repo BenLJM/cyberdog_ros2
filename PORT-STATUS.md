@@ -1138,3 +1138,46 @@ atomp.surface[0].offset 绝对偏移 = 168
    `progress_sp` 若无效，固件无法通知完成 —— 与「零 VINOTIFY + 超时」高度吻合。
 
 第 3 条与 0725 NOTES 的预言最吻合，建议优先。
+
+## 🔬 syncpoint / GoS 线索排查完毕：**GoS 不是真凶**（2026-07-28 深夜）
+
+0725 NOTES 把 GoS 空表列为「头号未知数」，本轮把它彻底查清了。
+
+### R35 侧确实是空壳（NOTES 的观察正确）
+```c
+/* R35 capture-support.c */
+void capture_get_gos_table(...) { *gos_count = 0; *gos_table = NULL; }   // 硬编码空
+int capture_get_syncpt_gos_backing(...) { *gos_index = GOS_INDEX_INVALID; ... }
+```
+`nvhost_syncpt_get_gos()` 这个符号在 R35 里**根本不存在**（NVIDIA 整条删除）。
+
+### 但 R32 自己也允许 GoS 无效 —— 所以这不构成阻塞
+```c
+/* R32 t194_capture_get_syncpt_gos_backing() */
+err = nvhost_syncpt_get_gos(pdev, id, &index, &offset);
+if (err < 0)
+        dev_dbg(...);          /* 只打调试日志 */
+*gos_index = index;            /* 保持 GOS_INDEX_INVALID */
+return 0;                      /* ← 照样返回成功 */
+```
+**R32 原版在 GoS 拿不到时同样把 `gos_index` 留成 `GOS_INDEX_INVALID` 并继续。**
+GoS 是「syncpoint 直写」的加速路径，不是完成通知的必需品。
+
+### 真正必需的 `syncpt_addr`（shim 地址）两代同构
+```c
+R35: return syncpt_unit_interface->start + syncpt_unit_interface->syncpt_page_size * id;
+R32: return syncpt_unit_interface->start + SYNCPT_SIZE * id;
+```
+语义与数值来源一致 → **固件写完成通知的地址是对的**。
+
+### 结论：三个候选里排掉了最可疑的一个
+
+| 候选 | 结论 |
+|---|---|
+| ~~syncpoint / GoS~~ | ❌ **已排除**（R32 自己也容忍 GoS 无效；shim 地址同构） |
+| `capture_flags` 的 `CAPTURE_FLAG_STATUS_REPORT_ENABLE` | ⏳ 未查 —— 现在升为**头号**（不置位则固件「做了但不报」，与零 VINOTIFY 完全吻合） |
+| flags 位域（R35 删 `fmlite_enable`，`compand` 挪位） | ⏳ 未查 |
+
+**下一轮起手式**：核对 `capture_template` 里 `capture_flags` 的实际值，
+以及 R32 固件对 `CAPTURE_FLAG_STATUS_REPORT_ENABLE` / `CAPTURE_FLAG_ERROR_REPORT_ENABLE` 的依赖。
+这两个标志在 R32 头里就定义在 `capture_descriptor.capture_flags` 上，位置已知（+4）。
