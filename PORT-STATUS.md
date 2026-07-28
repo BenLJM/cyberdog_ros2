@@ -1418,3 +1418,139 @@ CHANNEL_SETUP 填值 ✅ / **描述符可见性(dma_sync)** ✅
 - 找到了 `/mi1045904/camera_service`（`interaction_msgs/srv/CameraService`，
   `TAKE_PICTURE=1`）这个正确的触发入口
 - 红线遵守记录：全程未对 active 的 `camera_server` 调 configure
+
+---
+
+## 🏆 三堵墙连倒：argus 全栈起来了，采集链推进到「等 MIPI 帧」（2026-07-28 决定性突破）
+
+**上一节留的三步（补观测性 → 读真因 → 定点修复）全部走完，且结论完全推翻了之前的判断。**
+
+### 第一步：观测性缺口补上了（而且比想象的更严重）
+
+出厂节点的诊断信息全打 stdout，但 `chroot … su - mi -c` 无 tty 把它整个吞掉，
+journal 里只有 **2 行**。更坑的是 **rcl 文件日志（`~/.ros/log/*.log`）也指望不上**：
+spdlog 带缓冲，低产量节点（比如 `maincamera`）一直停在 **0 字节**，
+而 decisionmaker 因为写到 5MB 撑满缓冲反而看得见 —— 极易误判成「相机什么都没打」。
+
+修法：`jp5-stack-inner.sh` 里 `exec >/tmp/jp5-stack.log 2>&1`（用 exec 重定向而非
+`| tee`，保持单进程语义，systemd 主 PID 跟踪和 `KillMode=mixed` 不受影响），保留一代 `.prev`。
+
+### 第二步：`RESULT_INVALID_STATE` 是**误判**，不是故障
+
+读 `cyberdog_camera` 源码（本仓库自带）：
+
+```cpp
+int ArgusCameraContext::takePicture(...) {
+  if (!m_isStreaming) { CAM_ERR("Device is not stream on."); return CAM_INVALID_STATE; }
+```
+
+`m_isStreaming` 只在 `startCameraStream()` 里 `startRepeat` 成功后置 true；
+而 `on_activate → startCamera() → initCameraContext()` 是**空函数 `return true`**。
+⇒ **刚 activate 的 camera_server 收到 TAKE_PICTURE 必然返回 5，在出厂 JP4 上也一样。**
+正确契约是先 `START_LIVE_STREAM`(命令7) 再 `TAKE_PICTURE`(命令1)。
+
+> ⚠️ 源码坑：`startCameraStream()` 在 `createSession` 失败时 `return false` → `0` → 而
+> `CAM_SUCCESS == 0`。**START_LIVE_STREAM 返回 0 不等于成功**，必须靠内核活动佐证。
+
+### 第三步：真正的墙是 **R32 用户态 vs R35 内核的 GPU ABI**，跟采集 ABI 无关
+
+用对命令后，`camera_server` 的真实死因终于现形（进程直接 abort）：
+
+```
+SCF: Error InsufficientMemory: Unable to initialize EGL (GLService.cpp:144)
+  → createCameraProvider 失败 → assert(m_initialized) → exit -6
+```
+
+#### 墙 1：EGL（`NVGPU_GPU_IOCTL_ALLOC_AS`）
+
+ctypes 探针 + strace **差分**（R32 用户态 vs R35 用户态，同一颗内核）：
+整条 EGL 初始化链上 11 个 `'G'` 类 nvgpu ioctl **逐条完全一致**，只差最后一个：
+
+| | R32 用户态 | R35 用户态 |
+|---|---|---|
+| `'G'` nr=8 | size **16** → **ENOTTY** | size **64** → 0 ✅ |
+
+`struct nvgpu_alloc_as_args` 从 16 字节涨到 64 字节；ioctl 号把 size 编进去，
+内核 `switch(cmd)` 直接落 default。**整个 GPU/EGL/argus 栈就卡在这一个 ioctl 上。**
+
+不能零填充：R35 `common/mm/as.c:95` 对 `va_range_start/end` 为零一律 `-EINVAL`。
+补什么值不靠猜 —— 在宿主上 `LD_PRELOAD` 把 R35 自己传的 64 字节原样 dump 出来：
+`va_range_start=0x4000000`、`va_range_end=0x2000000000`、`flags=0x2(UNIFIED_VA)`、`split=0`。
+
+#### 墙 2：CUDA（`NVGPU_AS_IOCTL_ALLOC_SPACE`）
+
+同样手法：`'A'` nr=6，`pages` 从 `u32` 拓宽到 `u64`，后续字段整体挪位（24 → 32 字节）。
+
+#### 墙 3：芯片 ID（`libnvscf` 有**自己**的读取器）
+
+`strings libnvscf.so` 挖出并排的两条路径：
+
+```
+/sys/module/tegra_fuse/parameters/tegra_chip_id     ← R35 无此模块
+/tmp/tegra_chip_id                                  ← NVIDIA 官方覆盖钩子
+```
+
+**libnvscf 不走 libnvrm，因此没有 `/sys/devices/soc0` 回落**（libnvrm 自己是能回落的，
+所以它读 chip_id 一直是成功的 —— 这点很容易看漏）。读不到就
+`Unknown HW element!` → `Tegra chip ID not supported`(PowerServiceHwIsp.cpp:74)。
+
+> 附带纠正：`tegra_platform` 这个参数 R32 收的是**名字**（`silicon`），
+> 把 R35 的 `soc0/platform`（数字 `0`）直接抄过去会得到 `Unknown platform '0'`。
+
+### 落地：一个 LD_PRELOAD 垫片，**零内核改动**
+
+`dog-scripts/src/nvgpu-r32-shim.c` → `/opt/nvgpu-r32-shim.so`（必须在 chroot 内用
+gcc 7.5 编，宿主 gcc 9.4 编的会带 GLIBC_2.29+ 需求而加载失败；构建脚本
+`nvgpu-r32-shim-build.sh` 带装载自检 + 功能自检）：
+
+1. `'G'` nr=8 `ALLOC_AS` 16 → 64 字节
+2. `'A'` nr=6 `ALLOC_SPACE` 24 → 32 字节
+3. `tegra_fuse` sysfs 路径改道到 `/opt/nvgpu-r32-compat/`（**文件不存在就放行走原路**，
+   避免把本来能正确回落的 chip_id/chip_rev 塞错值）
+4. 诊断：任何 `'G'/'A'/'H'` ioctl 被 ENOTTY 拒都记一笔 —— 实测**已无第四条**
+
+开机自动生效：`jp5-chroot-prep.sh` 按 `soc0` 生成 compat 文件（非致命兜底，
+遵守"三服务共用 ExecStartPre 不能硬失败"的既有约束）；`jp5-stack-inner.sh` 挂 `LD_PRELOAD`
+并**取消 `DISPLAY=:0`**（无 X 服务器时 GLVND 会走 X11 平台，`eglGetDisplay` 直接返回
+`EGL_NO_DISPLAY`，日志里那句 `No protocol specified` 就是它）。
+
+### 战果：从「进程崩溃」推进到「等 MIPI 帧」
+
+```
+tegra194-isp5: r32-abi: ISP channel setup accepted: hw_channel_id=0 ...
+tegra194-vi5 : r32-abi: VI  channel setup accepted: hw_channel_id=1 queue_depth=9 request_size=704
+[RCE] vi5_hwinit: firmware CL2018101701 protocol version 2.2      ← RCE 固件自己报到
+tegra194-vi5 : r32-sync: descriptor sync active (iova=0xbfe78000 size=704)
+```
+
+用户态则走到了：
+
+```
+SCF: Timeout waiting on frame end sensor guid 0, capture sequence ID = 1, channel = 1/1
+     (NvCaptureViCsiHw.cpp:897)
+```
+
+**ISP 通道 ✅ VI 通道 ✅ RCE 固件握手 ✅ 描述符下发 ✅ ——差最后一步：传感器不出帧。**
+`camera_server` 也不再 abort 循环，进程稳定存活。
+
+### 改判与教训
+
+- 🔴 **「AI 相机的墙是采集 ABI」这个判断是错的**。真正卡死全栈的是 **GPU/EGL 的
+  `ALLOC_AS`**，一个 ioctl。之前十几轮针对采集 ABI 的排除工作（GoS/capture_flags/
+  描述符布局/内联 IOVA/dma_sync…）**结论仍然有效**，但它们从来不是当时的瓶颈 ——
+  因为 argus 根本没起来过，那些代码路径压根没被执行到。
+- 🔴 **观测性欠债的代价被严重低估**。真因（EGL 初始化失败）在第一次跑对命令时就
+  打在 stdout 上了，只是没人收得到。补一行 `exec >` 重定向，一小时内连倒三堵墙。
+- 💡 **strace 差分是这类 ABI 问题的利器**：同一颗内核上跑 R32 和 R35 两套用户态，
+  逐条比对 ioctl 序列，差异一眼可见，不需要任何猜测。
+- 💡 **R35 自己的用户态就是最好的参考实现**：不确定该往新结构体里填什么，
+  就 `LD_PRELOAD` 把它传的字节 dump 出来。
+
+### 下一轮：唯一剩下的问题是**传感器不出帧**
+
+现在的失败点干净且单一 —— 上下游全通，`waitCsiFrameEnd` 超时。可查方向：
+1. `vi capture get status failed`（内核）与 SCF 超时的对应关系
+2. ov13b10 是否真的被下了 stream-on（之前 v4l2 路径实测「传感器在流出」，
+   但那是另一条路径，需在 argus 路径下重验）
+3. NVCSI 通道/lane 配置与 argus 请求的分辨率是否匹配
+4. 此前所有采集 ABI 的排除工作**现在才真正到了能被验证的时候**

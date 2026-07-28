@@ -48,4 +48,36 @@ params_prep() {
 }
 params_prep || true
 
+# ---- 可选:R32 用户态兼容垫片的数据文件(AI 相机 EGL/argus 前置),失败只告警 ----
+# 2026-07-28: R32(JP4) 的 libnvscf 有一套【独立于 libnvrm 的】芯片 ID 读取器,
+# 只认这两条路径,没有 /sys/devices/soc0 回落:
+#     /sys/module/tegra_fuse/parameters/tegra_chip_id   ← R35 内核没有这个模块
+#     /tmp/tegra_chip_id                                ← NVIDIA 官方覆盖钩子
+# 读不到就 "Unknown HW element! Using default settings!" → PowerServiceHwIsp
+# 报 "Tegra chip ID not supported" → createCameraProvider 失败 → camera_server
+# assert 崩溃(abort 循环)。这里按 soc0 的真实值把两条路都铺上。
+# 配套的 ioctl 翻译层是 /opt/nvgpu-r32-shim.so(源码 dog-scripts/src/)。
+r32_compat_prep() {
+    local soc=/sys/devices/soc0 dir=/mnt/jp4/opt/nvgpu-r32-compat
+    [ -r "$soc/soc_id" ] || { echo "jp5-chroot-prep: 无 soc0/soc_id,跳过 r32 兼容层" >&2; return 0; }
+    mkdir -p "$dir" || return 0
+    # chip_id: shim 把 tegra_fuse 路径改道到这里(libnvrm 自己能回落,主要是喂 libnvscf)
+    cp -f "$soc/soc_id" "$dir/tegra_chip_id" 2>/dev/null || true
+    # platform: R32 这个参数收的是【名字】(silicon/fpga/sim/qt),不是数字 ——
+    # 直接把 R35 的 soc0/platform("0") 抄过去会让 libnvrm 打 "Unknown platform '0'"。
+    # 只在确认是 silicon(0) 时写名字;其他值宁可不写,让 R32 走它自己的默认
+    # (缺这个文件时它本来就默认 silicon,只是会多打一行提示)。
+    if [ "$(cat "$soc/platform" 2>/dev/null)" = "0" ]; then
+        echo silicon > "$dir/tegra_platform" 2>/dev/null || true
+    else
+        rm -f "$dir/tegra_platform" 2>/dev/null || true
+    fi
+    chmod 644 "$dir"/* 2>/dev/null || true
+    # libnvscf 的官方后路(双保险;/tmp 可能被开机清理,所以每次都写)
+    cp -f "$soc/soc_id" /mnt/jp4/tmp/tegra_chip_id 2>/dev/null || true
+    chmod 644 /mnt/jp4/tmp/tegra_chip_id 2>/dev/null || true
+    return 0
+}
+r32_compat_prep || true
+
 exit 0
