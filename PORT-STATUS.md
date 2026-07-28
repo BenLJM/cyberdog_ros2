@@ -999,3 +999,47 @@ uncorr_err: request timed out after 2500 ms        ← 通道建好了，等不�
 ⚠️ 已知小尾巴：实验结束后 ve/ispa 停在 on（采集错误路径泄漏了 busy 引用），无害，重启即清。
 ⚠️ E2 组合（C2 内核 + A DTB）目前只存在于 exp 入口；good 路径未动。
    **要不要把它转正成默认内核，需机主拍板**（转正 = AI 相机能力常驻 + 这套内核已被今天五轮实验反复锤过）。
+
+## 🔬 Stage-2 落地 + 零帧墙精确定位到 `nvcsi_error_config` 布局错位（2026-07-28）
+
+### 变体 G（Stage-2 完整包）已构建并实测
+
+内核 = 0002 + gated-0003 + **Stage-2 回移**（`nvcsi-t194.c` 的 prod apply/125ms 轮询线程/
+`finalize_poweron`/`prepare_poweroff`，全部关在同一个 `r32_camera_power` 门后）；
+DTB = A + **nvcsi `reg`**（设备更名 `15a00000.nvcsi`，devfs_name 钉死无影响）+ **mipical okay**。
+
+实测（jp5-exp 部署，正常启动零回归）：
+```
+r32-stage2: prod applied (cphy=0)            ← prod settings 真写进去了(DPHY)
+r32-stage2: mipi calibrate(on) rc=0          ← MIPI 校准成功(直接/线程两条路径都验证)
+```
+**但仍零帧**（同样的 2500ms request timeout）。
+
+### 逐层排除后的精确定位
+
+| 层 | 状态 |
+|---|---|
+| 传感器供电/时钟 | ✅ MCLK `extperiph2` enable=1 |
+| 传感器在流出 | ✅ **采集中实测 `0x0100=0x01`**（16 位寄存器要用 `i2ctransfer`，`i2cget` 会 ERR） |
+| MIPI pad 校准 | ✅ rc=0 |
+| NVCSI prod | ✅ applied |
+| 控制面 | ✅ 0x10 accepted ×19、RCE vi5_hwinit |
+| **`nvcsi_error_config` 布局** | 🎯 **两代不同 —— 唯一错位点** |
+
+`CSI_STREAM_SET_CONFIG (0x40)` 载荷的前三段（stream/brick/cil）两代逐字段一致，
+**最后一段 `nvcsi_error_config` 错位**：R32 = 9×u32+pad(40B)，R35 = 11×u32+pad+csimux(≥52B)，
+且从第 2 个字段起全体错位（R32 的 `host1x_intr_type` 读到 R35 的 `mask_hsm`……）。
+R32 固件"接受"后按错位布局解析错误掩码/`status2vi_notify_mask` ——
+**正是 0725 定性的「静默乱掉而非报错」模式**（当时点名 ISP 侧，这是 CSI 侧同款）。
+
+### 变体 H（下一步，已精确锁定）
+1. `csi5_fops.c` 在 R32 门控下按 **R32 布局**填 `error_config`（40B，字段按 R32 语义）
+2. 给 0x36/0x38/0x40 的**应答码加 `dev_info`**（内核没编 `CONFIG_DYNAMIC_DEBUG`，
+   dev_dbg 全部不可见 —— 这也是为什么至今看不到 RCE 的 resp.result）
+3. 顺手核对 `PHY_STREAM_OPEN/CLOSE` 载荷（结构简单，大概率一致）
+
+## ✅ 传感器健康哨兵上线（`cyberdog-sensor-doctor.timer`，每 5 分钟）
+
+对付「使能运行时退化且重发 ENABLE 救不回来」（0727 实测 11 小时后 ObstacleDetection 归零）。
+连续 2 次 0Hz 判死才重启栈；**栈非 active 时跳过**（绝不和相机实验打架，守卫已当场验证）；
+SoC≥85°C 拒绝动手；30 分钟冷却期防永动机；判决进 journal + kmsg 面包屑。

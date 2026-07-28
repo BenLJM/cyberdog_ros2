@@ -32,3 +32,4 @@ build/firmware/
 build/nvcsi-variants/B-conly/Image
 build/nvcsi-variants/good-deployed.dtb
 build/nvcsi-variants/C-gated/Image
+build/nvcsi-variants/G-stage2/Image

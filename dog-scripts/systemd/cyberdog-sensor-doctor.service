@@ -1,0 +1,8 @@
+[Unit]
+Description=CyberDog sensor health sentinel (ObstacleDetection/BodyState 0Hz -> stack restart)
+Documentation=file:/usr/local/bin/cyberdog-sensor-doctor.sh
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cyberdog-sensor-doctor.sh
+TimeoutStartSec=120
