@@ -1725,3 +1725,83 @@ RCE 追踪三计数仍是 **`vinotify_event=0` / `nvcsi_intr=0` / `vinotify_erro
 - `build/dtb-camera-modules-dts.py` —— 二进制级（对已编好的 DTB 反编译后手术）
 - `jp5-chroot-prep.sh` 的运行时覆盖改成**自纠正**：badge 里已含位置名就自动撤除，
   不再和修好的 DTB 打架（实测重启后覆盖目录已空，ISP 配置直接由 DTB 提供）
+
+---
+
+## 🔬 连拆三层 MIPI 校准空桩，并测定 argus 完全绕过内核 csi5（2026-07-29）
+
+传感器点亮之后继续攻"NVCSI 收不到"。**没打通**，但拆掉了三层真实的空桩，
+并测出一条改变后续方向的架构事实。
+
+### 三层空桩，一层比一层深
+
+**① `csi5_mipi_cal` 是 `return 0`（stage6）**
+
+```c
+static int csi5_mipi_cal(struct tegra_csi_channel *chan)
+{
+	/* Camera RTCPU handles MIPI calibration */
+	return 0;
+}
+```
+
+stage2 那句 `mipi calibrate(on) rc=0` 一直被当成"校准成功"，其实是**这个空桩的返回值**。
+照 `csi4_mipi_cal` 补出真实现后，lane 掩码算得完全正确：
+ov13b10 → `lanes=0x3000000` = CSIE|CSIF（port-index=4、4 lane）。
+
+**② T194 的整套校准 SoC ops 也是空桩（stage7）**
+
+```c
+static int tegra_mipical_no_op(struct tegra_mipi *mipi, int lanes_info)
+{  return -1;  }
+
+static const struct tegra_mipi_soc tegra19x_mipi_soc = {
+	.pad_enable = &tegra_mipi_bias_pad_no_op,
+	.pad_disable = &tegra_mipi_bias_pad_no_op,
+	.cil_sw_reset = NULL,
+	.calibrate = &tegra_mipical_no_op,          ← 恒 -1
+};
+```
+
+补上 stage6 后立刻现形：`calibration failed with -1 error`。
+而 `mipi_cal.c` 自己的注释写着 *"For t19x, the register space is same as t18x"* ——
+换回 T186 的真实现（`tegra_mipical_using_prod`）后 **`-1` 消失，`tegra_mipi_wait()`
+返回 0，校准这条路彻底打通**。硬件侧本就就位（`mipical@3990000` okay、
+`tegra_mipi_cal` 驱动已绑）。
+
+**③ `cil_settletime=0` 没人算（stage8）**
+
+DT 里 `cil_settletime = "0"` 是「自动计算」的约定，R35 固件会自己算、R32 不会。
+按同树现成的 `tegra_csi_ths_settling_time()`（csi4 就是这么用的）补算，预期 19。
+
+### 🔑 但真正改变方向的是这条测定
+
+ftrace 内核相机函数，argus 取流全程：
+
+| 函数族 | 调用次数 |
+|---|---|
+| `vi_capture_*` | 18 / 12 / 10 / 9 … |
+| `vi5_*` | 2 |
+| **`csi5_*`** | **0** |
+
+**argus 只走 fusa-capture 的 VI 通道 ioctl，完全绕过内核的 `csi5_fops`。**
+NVCSI 的流配置全部由 RCE 固件依 `CAPTURE_CHANNEL_SETUP` 消息完成，内核只是传声筒。
+
+⇒ **stage3（csi5 的 R32 消息语义）和 stage8 对 argus 路径都是死代码**
+（这也直接解释了为什么 stage8 部署后 dmesg 里一条 `r32-settle` 都没有）。
+stage6 仍然有效 —— 它是经 stage2 的 `nvcsi_finalize_poweron → tegra_csi_mipi_calibrate`
+进入的，与 csi5 的取流路径无关。
+
+> 顺带排除：把 `cil_settletime` 用 shim 的 DT 覆盖直接喂成 19（argus 确实会读这个
+> 属性，strace 有据），零帧依旧 —— 所以问题不在 settle time 这个值本身。
+
+### 现状与下一轮靶心
+
+传感器在发 ✅ 校准已成功 ✅ ISP/VI 通道全建好 ✅ RCE 握手正常 ✅ 描述符下发 ✅ —— 仍零帧。
+
+既然 NVCSI 由 RCE 依消息配置，下一轮应转向 **`CAPTURE_CHANNEL_SETUP` 里 argus 填的
+CSI/CIL 配置**：R32 固件期待的字段布局/语义与 R35 argus 填的是否一致
+（此前 stage4 只逐字节核过描述符环的布局，没核过 channel config 里的 CSI 部分）。
+
+产物：`build/stage6-csi5-mipical.py`、`stage7-mipical-t194.py`、`stage8-settletime.py`，
+以及 `build-variant-{K,L,M}.sh`（断言均已扩展，DTB 复核新增"出厂 badge×3 + module0=主相机"两项）。
