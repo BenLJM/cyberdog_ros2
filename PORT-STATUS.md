@@ -1840,3 +1840,21 @@ ISP 通道 ✅   VI 通道 ✅   RCE 握手 ✅   描述符下发 ✅
   而后面还有声明 —— 项目内第二次踩。注入器要挑「声明区之后的第一条语句」当锚点。
 - **子串重叠导致断言误判**：`"\t\tfoo();\n"` 包含 `"\tfoo();\n"`，
   先删单 tab 版会数出 2 次。**缩进不同的同名锚点必须从最长的先删**。
+
+### stage12（诊断工具，未成功）：NVCSI 寄存器 debugfs
+
+想要一个**不依赖 RCE、不依赖 trace 解码**的独立测量 —— 直接读 NVCSI 接收端寄存器，
+判断"有没有看到 HS 跳变"。（`CONFIG_STRICT_DEVMEM=y` 挡住了用户态 `/dev/mem`，
+只能加 debugfs。）
+
+文件建起来了、能读出值，但**变体 Q 引入了 VI 回归**：`vi capture set config failed`
+（P 上是更靠后的 `vi capture get status failed`，且传感器能出流）。
+去掉寄存器读之后仍然复现 ⇒ **不是读寄存器扰动，是 stage12 本身**。
+
+推测：`debugfs_create_file()` 挂在 `tegra194_nvcsi_finalize_poweron()` 里，
+而那条路径可能持锁 / 不可睡眠，`debugfs_create_file` 会分配内存并取互斥锁 ——
+拖慢之后让后续的 RCE 消息超时。**下次应改到 probe 时创建**。
+
+> 目前最好的实验状态是**变体 P**（Image `1eb4f2ad` / DTB `9562d2d7`）：
+> 传感器出流、CSI 配置参数与时序全对、无 VI/ISP 回归，只是零帧。
+
