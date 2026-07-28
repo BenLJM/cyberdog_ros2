@@ -1647,3 +1647,81 @@ argus 把 v4l2 节点当成了纯粹的「能力/控件枚举接口」，从没�
 `frame-trace.sh`（RCE 固件视角）、`sensor-live.sh`（采集中实况采样 I2C+debugfs）、
 `v4l2-ioctl-trace.sh`（ioctl + 内核 function tracer 双向）、`mc-strace.sh`（确定性复现器）。
 四个脚本全部遵守红线：出厂栈停着、只起全新实例、不触碰 active 的 `camera_server`。
+
+---
+
+## 🏆 DTB 相机节点修好：**传感器上电并进入 streaming**（2026-07-28 晚）
+
+上一节的核心假设（模块顺序反了）**验证成立**。
+
+### 改了什么
+
+`tegra-camera-platform/modules` 换回出厂 `tegra194-mi-k91.dtb` 的描述：
+
+| | 改前（NVIDIA 参考板 P2151） | 改后（出厂 RBP194） |
+|---|---|---|
+| module0 | ov7251_a@61 / `ov7251_0_P2151X` / `"0"` | **ov13b10@36 / `ov13b10_bottom_RBP194` / `"bottom"`** |
+| module1 | ov7251_b@62 / `ov7251_1_P2151X` / `"1"` | ov7251_a@61 / `ov7251_l_center_RBP194` / `"center"` |
+| module2 | ov13b10@36 / `ov13b10_2_P2151X` / `"2"` | ov7251_b@62 / `ov7251_front_RBP194` / `"front"` |
+
+`devname` 与 `proc-device-tree` **保持指向本树自己的节点名**（`ov13b10_e@36` 等），
+不能抄出厂的（出厂叫 `ov13b10@36`），否则 PCL 解析不到。
+
+### 结果：`camera_server` 开 camera id 0 终于指向主相机
+
+采集进行中实况采样（`tools/camera-probes/sensor-live.sh`）：
+
+```
+T+15s  driver-streaming=0   i2c reg 0x0100: 无应答
+T+16s  driver-streaming=1   i2c reg 0x0100: 0x01     ← 上电 + 进入 streaming
+ …     持续到 T+24s
+```
+
+**驱动 streaming 标志 1、I2C 直读 mode-select = 0x01** —— 传感器真的在发数据了。
+这是整个 AI 相机战役里第一次看到传感器被点亮。
+
+### 现在的墙：NVCSI 收不到
+
+```
+r32-power: group_busy (gated ON)
+r32-stage2: prod applied (cphy=0) / mipi calibrate(on) rc=0 [direct]
+r32-abi: ISP channel setup accepted
+r32-abi: VI channel setup accepted (queue_depth=9 request_size=704)
+[RCE] vi5_hwinit: firmware CL2018101701 protocol version 2.2
+r32-sync: descriptor sync active (iova=0xbfe7c000 size=704)
+vi capture get status failed          ← 仍然
+```
+
+RCE 追踪三计数仍是 **`vinotify_event=0` / `nvcsi_intr=0` / `vinotify_error=0`**。
+**传感器在发、NVCSI 一个中断都收不到** —— 问题现在明确落在 MIPI 接收层
+（lane 配置 / CIL 时钟 / 校准 / cphy-vs-dphy），正是 stage2/stage3 那批工作的靶心。
+
+### ⚠️ 本轮的操作教训（重要）
+
+**`jp5` 这个 good 条目的 Image（`b082b8ea`，7/26 构建）从来就不含 r32 相机补丁** ——
+那批工作一直挂在 `jp5-exp` 上没转正（「E2 转正待机主拍板」）。狗在两次实验之间
+**一直跑着上一轮实验的 `Image.exp`**（一次性机制只把 DEFAULT 拨回，不动文件）。
+我第一次 arm 时错把 good Image 当成"当前内核"传了进去，重启后门控参数直接消失
+（`/sys/module/tegra_camera_rtcpu/parameters/r32_camera_power: No such file`），
+整轮实验作废。
+
+⇒ **做 DTB 实验前必须确认 `Image.exp` 是不是当前真正在跑的那个**，
+   判据：`sudo strings -a <Image> | grep -c r32_camera_power`（good 件是 0）。
+
+由此还导致第二个问题：变体 J 的 DTB（`b188ab22`）与 good DTB（`2228d7ab`）本就不同
+（J 的 DTB 额外含电源拓扑 / nvcsi reg / mipical okay），而当前内核树已把那批 DTS
+改动还原了，走源码路线会编出**不含**它们的 DTB。
+解法：**直接对 J 的 DTB 反编译产物做手术**（`build/dtb-camera-modules-dts.py`），
+保证与 J 的差异只有相机 modules 块（实测 44 行 diff，全在该块内）。
+`dtc` 往返保真已自检（唯一差异是 `\007` vs `\a` 的转义写法，同一字节）。
+
+> 🔴 又一次踩到 **`cmd | head -n` 的 SIGPIPE**：`dtc … 2>&1 | head -5` 把 dtc 杀了，
+> 产物没生成却看不出错。这个坑今天第二次咬人 —— 输出一律落文件再看。
+
+### 落地
+
+- `build/dtb-camera-modules.py` —— 源码级（改 `tegra194-camera-p2151.dtsi`，
+  已应用到内核树，下次整树构建自动带上）
+- `build/dtb-camera-modules-dts.py` —— 二进制级（对已编好的 DTB 反编译后手术）
+- `jp5-chroot-prep.sh` 的运行时覆盖改成**自纠正**：badge 里已含位置名就自动撤除，
+  不再和修好的 DTB 打架（实测重启后覆盖目录已空，ISP 配置直接由 DTB 提供）

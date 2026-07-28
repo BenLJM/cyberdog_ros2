@@ -91,19 +91,35 @@ r32_compat_prep || true
 # ⚠️ DT 属性是 NUL 结尾字符串,必须用 printf 写出结尾的 \0。
 # ⚠️ 这是运行时兜底;正解是修 DTB 源码里的 tegra-camera-platform 节点
 #    (还应把 module 顺序改回出厂的 module0=ov13b10,因为 camera_server 开的是 id 0)。
+#
+# 【自纠正】DTB 修好之后这层覆盖必须自动让路 —— 否则它会拿旧的模块顺序把已经
+# 正确的 DTB 值再改错。判据：badge 里含不含 libnvodm 认识的位置名。
+# 每个模块按自己的 devname 决定该写什么，与模块顺序无关。
 r32_camera_dt_prep() {
     local base=/mnt/jp4/opt/nvgpu-r32-compat/dt/tegra-camera-platform/modules
-    local m
-    # 我们 DTB 的模块序: module0=ov7251_a@61, module1=ov7251_b@62, module2=ov13b10@36
+    local dt=/proc/device-tree/tegra-camera-platform/modules
+    local m live dev badge pos
+    [ -d "$dt" ] || return 0
     for m in module0 module1 module2; do
-        mkdir -p "$base/$m" 2>/dev/null || return 0
+        [ -d "$dt/$m" ] || continue
+        live=$(tr -d '\0' < "$dt/$m/badge" 2>/dev/null)
+        # DTB 已经是出厂描述(badge 含位置名)→ 撤掉覆盖,让 DTB 自己说话
+        case "$live" in
+            *bottom*|*center*|*front*|*rear*)
+                rm -rf "$base/$m" 2>/dev/null || true
+                continue ;;
+        esac
+        dev=$(tr -d '\0' < "$dt/$m/drivernode0/devname" 2>/dev/null)
+        case "$dev" in
+            *ov13b10*)  badge=ov13b10_bottom_RBP194;  pos=bottom ;;
+            *2-0061*)   badge=ov7251_l_center_RBP194; pos=center ;;
+            *2-0062*)   badge=ov7251_front_RBP194;    pos=front  ;;
+            *)          continue ;;
+        esac
+        mkdir -p "$base/$m" 2>/dev/null || continue
+        printf '%s\0' "$badge" > "$base/$m/badge"    2>/dev/null || true
+        printf '%s\0' "$pos"   > "$base/$m/position" 2>/dev/null || true
     done
-    printf 'ov7251_l_center_RBP194\0' > "$base/module0/badge"    2>/dev/null || true
-    printf 'center\0'                > "$base/module0/position" 2>/dev/null || true
-    printf 'ov7251_top_RBP194\0'     > "$base/module1/badge"    2>/dev/null || true
-    printf 'front\0'                 > "$base/module1/position" 2>/dev/null || true
-    printf 'ov13b10_bottom_RBP194\0' > "$base/module2/badge"    2>/dev/null || true
-    printf 'bottom\0'                > "$base/module2/position" 2>/dev/null || true
     chmod -R a+rX /mnt/jp4/opt/nvgpu-r32-compat/dt 2>/dev/null || true
     return 0
 }
