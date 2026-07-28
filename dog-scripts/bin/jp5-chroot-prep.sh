@@ -80,4 +80,33 @@ r32_compat_prep() {
 }
 r32_compat_prep || true
 
+# ---- 可选:相机模块 badge/position 覆盖(AI 相机 ISP 配置加载),失败只告警 ----
+# 2026-07-28: 我们移植的 DTB 里 tegra-camera-platform 用的是 NVIDIA P2151 参考板
+# 的写法(badge="ov13b10_2_P2151X"、position="2"),而 libnvodm_imager 认的位置名是
+# 一个【固定集合】: bottom/center/centerleft/centerright/front/rear —— 对不上就
+# "Could not map module to ISP config string",三个模块的 .isp 全加载不了
+# (磁盘上的出厂配置叫 ov13b10_bottom_RBP194.isp 等,按 badge 命名查找)。
+# 出厂 DTB 用的是 badge="ov13b10_bottom_RBP194"、position="bottom"。
+# 这里通过 shim 的 DT 覆盖机制补上,实测三个 .isp 全部加载成功。
+# ⚠️ DT 属性是 NUL 结尾字符串,必须用 printf 写出结尾的 \0。
+# ⚠️ 这是运行时兜底;正解是修 DTB 源码里的 tegra-camera-platform 节点
+#    (还应把 module 顺序改回出厂的 module0=ov13b10,因为 camera_server 开的是 id 0)。
+r32_camera_dt_prep() {
+    local base=/mnt/jp4/opt/nvgpu-r32-compat/dt/tegra-camera-platform/modules
+    local m
+    # 我们 DTB 的模块序: module0=ov7251_a@61, module1=ov7251_b@62, module2=ov13b10@36
+    for m in module0 module1 module2; do
+        mkdir -p "$base/$m" 2>/dev/null || return 0
+    done
+    printf 'ov7251_l_center_RBP194\0' > "$base/module0/badge"    2>/dev/null || true
+    printf 'center\0'                > "$base/module0/position" 2>/dev/null || true
+    printf 'ov7251_top_RBP194\0'     > "$base/module1/badge"    2>/dev/null || true
+    printf 'front\0'                 > "$base/module1/position" 2>/dev/null || true
+    printf 'ov13b10_bottom_RBP194\0' > "$base/module2/badge"    2>/dev/null || true
+    printf 'bottom\0'                > "$base/module2/position" 2>/dev/null || true
+    chmod -R a+rX /mnt/jp4/opt/nvgpu-r32-compat/dt 2>/dev/null || true
+    return 0
+}
+r32_camera_dt_prep || true
+
 exit 0

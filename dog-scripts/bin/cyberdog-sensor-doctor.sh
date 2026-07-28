@@ -44,6 +44,18 @@ if [ "$TEMP" -ge 85000 ]; then
     exit 0
 fi
 
+# ── cyberdog-sensors 卡在 failed 的自愈 ──────────────────────────────────────
+# 2026-07-28: 栈在短时间内被反复重启(做实验时很常见)会把 cyberdog-sensors 的
+# StartLimitBurst=4/600s 预算烧光,之后它就【永久】停在 failed —— systemd 报
+# "Start request repeated too quickly",连 systemctl start 都不再执行。
+# 光靠 WantedBy 跟随栈重跑救不回来,必须先 reset-failed 清掉限流计数。
+if [ "$(systemctl is-failed cyberdog-sensors.service 2>/dev/null)" = "failed" ]; then
+    log "cyberdog-sensors 卡在 failed(多半是启动限流) — reset-failed 后重拉"
+    systemctl reset-failed cyberdog-sensors.service 2>/dev/null || true
+    systemctl start cyberdog-sensors.service 2>/dev/null || true
+    exit 0   # 让它自己跑完(oneshot 最长 300s),下一轮再测量
+fi
+
 # ── 测量(chroot 无 tty 会吞 stdout —— 抓变量再吐，老坑) ───────────────────────
 OUT=$(/usr/sbin/chroot "$CHROOT" /bin/su - mi -c '
     source /opt/ros2/cyberdog/setup.bash 2>/dev/null

@@ -102,6 +102,9 @@ static int (*real_ioctl)(int, unsigned long, ...);
 static int (*real_open)(const char *, int, ...);
 static int (*real_open64)(const char *, int, ...);
 static int (*real_openat)(int, const char *, int, ...);
+static FILE *(*real_fopen)(const char *, const char *);
+static FILE *(*real_fopen64)(const char *, const char *);
+static int (*real_access)(const char *, int);
 static int dbg = -1;
 
 /* ---------------------------------------------------------------------------
@@ -119,18 +122,50 @@ static int dbg = -1;
  * (soc_id=25=0x19=T194, platform=0=silicon, revision=A02)。这里把 R32 找的路径
  * 重定向到由 nvgpu-r32-compat-setup.sh 依据 soc0 生成的真实文件。
  * ------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ * 设备树属性覆盖（AI 相机 PCL 前置）
+ *
+ * 2026-07-28: 出厂 camera_server 拍不出照的最后一环 —— PCL 读不到任何传感器模块:
+ *     NvPclHwGetModuleList: WARNING: Could not map module to ISP config string
+ *     NvPclHwGetModuleList: No module data found      ← 三个模块全军覆没
+ * 根因是 `position` 属性。libnvodm_imager.so 里位置名是个【固定集合】:
+ *     bottom / center / centerleft / centerright / front / rear
+ * 而我们移植的 DTB 用的是 NVIDIA P2151 参考板写法 "0"/"1"/"2" —— 映射不上,
+ * 模块被丢弃 ⇒ 没人给 ov13b10 上电 ⇒ MIPI 无数据 ⇒ waitCsiFrameEnd 超时。
+ * 出厂 DTB 用的是 position="bottom"、badge="ov13b10_bottom_RBP194"。
+ *
+ * /proc/device-tree 改不了,所以这里按同样的相对路径从 COMPAT_DIR/dt/ 下取覆盖值
+ * (⚠️ DT 属性是 NUL 结尾的字符串,覆盖文件必须照样带结尾 NUL)。
+ * 这是运行时验证/兜底;正解是修 DTB 源码里的 tegra-camera-platform 节点。
+ * ------------------------------------------------------------------------- */
 #define COMPAT_DIR "/opt/nvgpu-r32-compat"
+#define DT_PREFIX  "/proc/device-tree/"
+
+/* remap() 判断覆盖文件是否存在时【必须】走真 access —— 本 shim 自己也拦了
+ * access(),直接调会绕回自己造成递归。 */
+static int real_access_ok(const char *p)
+{
+    if (!real_access) real_access = dlsym(RTLD_NEXT, "access");
+    return real_access(p, R_OK) == 0;
+}
 
 static const char *remap(const char *path)
 {
     static const char *const names[] = {
         "tegra_chip_id", "tegra_chip_rev", "tegra_platform", NULL
     };
-    static char buf[128];
+    static char buf[512];
     const char *tail;
     int i;
 
     if (!path) return NULL;
+
+    if (strncmp(path, DT_PREFIX, sizeof(DT_PREFIX) - 1) == 0) {
+        snprintf(buf, sizeof(buf), "%s/dt/%s", COMPAT_DIR,
+                 path + sizeof(DT_PREFIX) - 1);
+        return real_access_ok(buf) ? buf : NULL;
+    }
+
     if (strncmp(path, "/sys/module/tegra_fuse/parameters/", 34) == 0)
         tail = path + 34;
     else if (strncmp(path, "/sys/module/fuse/parameters/", 28) == 0)
@@ -144,7 +179,7 @@ static const char *remap(const char *path)
             /* 只补真正准备了的那几个。没准备的一律放行走原路径 —— chip_id/chip_rev
              * 本来就能正确回落到 /sys/devices/soc0/{soc_id,revision}，硬塞反而
              * 可能塞错值。改什么由 COMPAT_DIR 里放了什么决定。 */
-            return access(buf, R_OK) == 0 ? buf : NULL;
+            return real_access_ok(buf) ? buf : NULL;
         }
     }
     return NULL;
@@ -195,6 +230,32 @@ int openat(int dirfd, const char *path, int flags, ...)
     va_start(ap, flags); m = va_arg(ap, mode_t); va_end(ap);
     if (!real_openat) real_openat = dlsym(RTLD_NEXT, "openat");
     REMAP_BODY(real_openat, real_openat(dirfd, path, flags, m));
+}
+
+/* fopen 家族：libnvodm_imager 读设备树属性走的是 fopen 而不是 open —— 只拦
+ * open/openat 的话 `cat` 能改道、它却不受影响,查这个花了一轮。access 一并拦,
+ * 它用来探 <badge>.bin 之类文件是否存在。 */
+FILE *fopen(const char *path, const char *mode)
+{
+    const char *rp = remap(path);
+    if (!real_fopen) real_fopen = dlsym(RTLD_NEXT, "fopen");
+    if (rp && dbg) fprintf(stderr, "[nvgpu-r32-shim] 改道(fopen) %s → %s\n", path, rp);
+    return real_fopen(rp ? rp : path, mode);
+}
+
+FILE *fopen64(const char *path, const char *mode)
+{
+    const char *rp = remap(path);
+    if (!real_fopen64) real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
+    if (rp && dbg) fprintf(stderr, "[nvgpu-r32-shim] 改道(fopen64) %s → %s\n", path, rp);
+    return real_fopen64(rp ? rp : path, mode);
+}
+
+int access(const char *path, int mode)
+{
+    const char *rp = remap(path);   /* remap 内部走 real_access_ok(),不会绕回这里 */
+    if (!real_access) real_access = dlsym(RTLD_NEXT, "access");
+    return real_access(rp ? rp : path, mode);
 }
 
 int ioctl(int fd, unsigned long req, ...)

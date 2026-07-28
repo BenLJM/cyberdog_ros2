@@ -1554,3 +1554,96 @@ SCF: Timeout waiting on frame end sensor guid 0, capture sequence ID = 1, channe
    但那是另一条路径，需在 argus 路径下重验）
 3. NVCSI 通道/lane 配置与 argus 请求的分辨率是否匹配
 4. 此前所有采集 ABI 的排除工作**现在才真正到了能被验证的时候**
+
+---
+
+## 🔬 传感器不出帧：定位到「argus 从不让 v4l2 通道进入流状态」（2026-07-28 续）
+
+三堵 GPU/EGL 墙倒掉后接着攻唯一剩余问题。本轮**没有修好**，但把问题从「不知道哪一层」
+收敛成了一个具体、可复现、有硬证据的单点，并顺手修好了 ISP 配置加载。
+
+### 逐层排除（每层都有实测数据，不是推断）
+
+**① VI/CSI 接收端一片死寂** —— 用 RCE 固件视角的 ftrace（`tegra_rtcpu` 事件组）：
+
+| 事件 | 计数 |
+|---|---|
+| `rtcpu_vinotify_event`（帧起止） | **0** |
+| `rtcpu_nvcsi_intr`（MIPI 链路错误） | **0** |
+| `rtcpu_vinotify_error`（VI 错误） | **0** |
+
+连一个错误中断都没有 ⇒ 不是「收到坏帧」，是**线上根本没有数据**。RCE 固件本身健康
+（`vi5_hwinit: firmware CL2018101701 protocol version 2.2`）。
+
+**② 传感器根本没上电** —— 采集进行中三路交叉取证，连采 24 秒：
+
+| 探测 | 结果 |
+|---|---|
+| 驱动 `debugfs .../camera-ov13b10_e/streaming` | 全程 **0** |
+| `i2ctransfer` 读 reg 0x0100 | 全程**无应答**（芯片断电） |
+| `ov13b10` ftrace 事件 | **0** |
+
+**③ 但 PCL 那一层原来全军覆没** —— `NvPclHwGetModuleList: No module data found` ×3，
+伴随 `Could not map module to ISP config string`。
+
+### 🏆 顺手修好的：ISP 配置加载（badge 命名）
+
+对比出厂 DTB（`dtc -I dtb` 解 `/mnt/jp4/boot/tegra194-mi-k91.dtb`）：
+
+| | 出厂 JP4 | 我们移植的 |
+|---|---|---|
+| badge | `ov13b10_bottom_RBP194` | `ov13b10_2_P2151X` |
+| position | `"bottom"` | `"2"` |
+| **模块序** | **module0 = ov13b10（主相机）** | module2 = ov13b10 |
+
+`RBP194` 是小米出厂板标识，`P2151X` 是 **NVIDIA 参考板** —— 移植时 `tegra-camera-platform`
+节点用成了参考板的 `tegra194-camera-p2151.dtsi`。
+
+关键证据：`strings libnvodm_imager.so` 里位置名是一个**固定集合**
+`bottom / center / centerleft / centerright / front / rear`，`"0"/"1"/"2"` 不在其中。
+（注意：它不读 `position` 属性本身，而是在 **badge 字符串里做子串匹配**。）
+
+用 shim 的 DT 覆盖机制把 badge 改成出厂值后：
+
+```
+---- imager: Found override file [/var/nvidia/nvcam/settings/ov13b10_bottom_RBP194.isp]. ----
+---- imager: Found override file [/var/nvidia/nvcam/settings/ov7251_top_RBP194.isp]. ----
+---- imager: Found override file [/var/nvidia/nvcam/settings/ov7251_l_center_RBP194.isp]. ----
+```
+
+**三个 ISP 配置全部加载成功**（此前是三次 `No override file found`），
+且 SCF 现在能成功获取 **index 0/1/2 三个 MIPI 相机源**（失败的 3/4/6/8 是 USB 外接设备）。
+
+### 🎯 收敛到的单点：argus 只枚举、从不开流
+
+对 `/dev/video*` 全程 ioctl 追踪 + 内核 function tracer 双向取证：
+
+| 侧 | 观察 |
+|---|---|
+| 内核 | `tegra_channel_querycap`×15、`camera_common_enum_framesizes`×9、`camera_common_s_power`×3、`tegra_channel_set_power`×2 |
+| 用户态 | **只有 `VIDIOC_QUERYCAP` 和 `VIDIOC_QUERY_EXT_CTRL`** |
+
+**没有 `VIDIOC_S_FMT`、没有 `VIDIOC_STREAMON`、没有 `VIDIOC_S_CTRL`。**
+argus 把 v4l2 节点当成了纯粹的「能力/控件枚举接口」，从没让通道进入流状态 ⇒
+`tegra_channel_start_streaming` 不跑 ⇒ 传感器不上电 ⇒ MIPI 无数据 ⇒
+`waitCsiFrameStart` 超时（`NvCaptureViCsiHw.cpp:1010`）。
+
+### 下一轮的两条路（按把握度排序）
+
+1. **修 DTB 的 `tegra-camera-platform` 节点**（正解，把握较高）
+   - badge/position 换回出厂值（当前靠 shim 运行时覆盖兜着，已验证有效）
+   - **模块顺序换回出厂的 `module0 = ov13b10`** —— `camera_server` 打开的是
+     camera **id 0**，出厂那是主相机，我们这儿是鱼眼 ov7251。这条**尚未验证**，
+     但很可能是「argus 认为该设备不需要 v4l2 开流」的上游原因。
+   - 补 `devnode`（出厂有、我们没有；不过实测 PCL 本轮没读它）
+   - 工具现成：`jp5-exp` 一次性实验启动项，DTB 改坏了自动拨回。
+2. **查 argus 为何不走 v4l2 开流路径**：R32 的 argus 在 bypass 模式下应由
+   `VIDIOC_STREAMON` 触发 `tegra_channel_start_streaming` → 传感器 `s_stream(1)`。
+   需确认 R35 的 `tegra-capture-vi` 是否改变了这个契约
+   （bus_info 已从 `platform:<addr>.vi:N` 变成 `platform:tegra-capture-vi:N`）。
+
+### 本轮沉淀的工具（`tools/camera-probes/`）
+
+`frame-trace.sh`（RCE 固件视角）、`sensor-live.sh`（采集中实况采样 I2C+debugfs）、
+`v4l2-ioctl-trace.sh`（ioctl + 内核 function tracer 双向）、`mc-strace.sh`（确定性复现器）。
+四个脚本全部遵守红线：出厂栈停着、只起全新实例、不触碰 active 的 `camera_server`。
