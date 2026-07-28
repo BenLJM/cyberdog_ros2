@@ -31,3 +31,4 @@ build/firmware/
 # DTB(317K) 和 SHA256SUMS 保留，它们是可审计的关键产物
 build/nvcsi-variants/B-conly/Image
 build/nvcsi-variants/good-deployed.dtb
+build/nvcsi-variants/C-gated/Image

@@ -783,3 +783,51 @@ panic → 热重启 → **还是同一个坏内核** → 再 panic → **无限�
 
 → 正解是**运行时开关**：驱动照常内建、probe 时不做任何危险操作，
 只注册一个默认关闭的开关；由 userspace 触发。挂死 → panic → 热重启 → 开关回到默认 0 → 自愈。
+
+## ✅ 变体 C：R32 相机上电契约「运行时开关版」（2026-07-28，已构建待部署）
+
+**这是实现"全自动实验"的核心构件。**
+
+```
+变体 C = 0002（纯函数定义，无调用点）
+       + 改造后的 0003（三处调用包在 r32_camera_power 开关里，默认 0）
+       ✗ 故意不含 0004
+```
+
+### 为什么必须是运行时开关（两条硬约束）
+
+1. **probe 挂死必然发生在 initrd 之前**：这些调用点跑在 rtcpu 的 probe 路径 =
+   `device_initcall`，而**所有 initcall 都在 initrd 的 `/init` 之前跑完**
+   （dmesg 实证：`[5.58] jp5-init: up`）→ initrd 里的自动回滚守卫**永远看不到它**，
+   没有任何自动回来的路，只能人工拔电 + RCM。
+2. **不能靠"编成模块"推迟 probe**：`TEGRA_CAMERA_RTCPU` 在 Kconfig 里是
+   **`bool` 而非 `tristate`**，只能 y/n。
+
+### 为什么刻意不含 0004
+
+0004 给 `t19_nvcsi_info`/`t19_vi5_info` 加了 `nvcsilp`/`vi-const` 时钟，
+而 `nvhost_module_init()` 里有 **`clk_prepare_enable()`** —— 那是 **probe 阶段就执行**的，
+**运行时开关关不掉**。先把能关的关掉、单独验证 0003 这一半。
+
+> 顺带发现：0004 里的 `.keepalive = true` 是**死字段** ——
+> `keepalive` 在 R35 的 `nvhost_acm.c` 里**根本不存在**，NVIDIA 连读它的代码都删了。
+> 所以 0004 的真实风险只在时钟那部分。
+
+### 全自动闭环
+
+| 步骤 | 谁 | 失败时 |
+|---|---|---|
+| 内核启动 | 自动 | 开关默认 0 ⇒ 等价 pristine，**必然起得来** |
+| `echo 1 > /sys/module/tegra_camera_rtcpu/parameters/r32_camera_power` | 远程 | — |
+| 触发 RCE runtime resume | 远程 | 挂死 → `hung_task_panic` → **ramoops 记 call trace** |
+| 恢复 | **自动** | `panic=15` 热重启，参数回 0 → 狗自己回来 |
+
+### 构建方法论
+
+注入用**精确字符串锚定 + 断言命中次数**，不用 patch 上下文
+（这棵树的行号已经漂过一次 —— `0001` 就是那么冲突的）。四处锚点任一命中数不对就整体失败并回退。
+构建后确认源码树两项残留均为 0，避免污染下一个变体。
+
+**产物**：`build/nvcsi-variants/C-gated/Image`，sha256 `8bc45ee7f8d4fd1f…`
+符号验证：`r32_camera_power` 1 / `camrtc_device_group_busy` 1 / `camrtc_device_group_reset` 1 /
+**`nvcsilp` 0**（确认不含 0004）。

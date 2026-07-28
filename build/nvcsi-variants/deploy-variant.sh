@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-#  NVCSI 电源域变体 部署 / 回滚      用法: deploy-variant.sh <A|B|revert|status>
+#  NVCSI 电源域变体 部署 / 回滚      用法: deploy-variant.sh <A|B|C|revert|status>
 #  在狗上以 root 执行。**不自动重启** —— 重启由人决定。
 #
 #  A      = 只换 DTB（Image 一字节不动）
@@ -24,6 +24,8 @@ STAGE=/tmp/nvcsi-variants
 # initrd 里的自动回滚守卫**够不着**，只能走 RCM 救砖。
 EXPECT_A_DTB=dd9a7350406abd0ab64a3634c647f079740b1ac81f9551ca42698efc7ada88b3
 EXPECT_B_IMG=bdf077cf39673adb237452413bab26795bb1eb1157a9fbffe3c5e6c45493bdcc
+# 变体 C = 0002 + 运行时开关版 0003（默认关），故意不含 0004
+EXPECT_C_IMG=8bc45ee7f8d4fd1ffd942b1620854e1502168bebf4bc6174c3f099c4b8a7e21c
 
 mount | grep -q "$P1" || { mkdir -p $P1; mount /dev/mmcblk0p1 $P1; }
 
@@ -56,6 +58,7 @@ status() {
     echo "  --- 变体参考校验和 ---"
     echo "    变体A DTB   dd9a735040 6abd0ab6"
     echo "    变体B Image bdf077cf39 673adb23"
+    echo "    变体C Image 8bc45ee7f8 d4fd1ffd"
     echo "    good  DTB   $(sha $BOOT/tegra194-mi-k91.dtb.pre-variant 2>/dev/null || echo '(尚未备份)')"
 }
 
@@ -82,6 +85,18 @@ B)
     echo
     echo "下一步：reboot。挂死的话 → 拔电重启（USB 插着会进 RCM，用 RCM 刷回）"
     ;;
+C)
+    verify "$STAGE/C-gated/Image" "$EXPECT_C_IMG" "变体C Image"
+    [ -f "$BOOT/Image.pre-variant" ] || cp -a "$BOOT/Image" "$BOOT/Image.pre-variant"
+    cp "$STAGE/C-gated/Image" "$BOOT/Image"
+    sync
+    verify "$BOOT/Image" "$EXPECT_C_IMG" "落盘后复校 Image"
+    echo "✅ 变体 C 已部署（只换 Image；开关默认关，预期能正常启动）"
+    status
+    echo
+    echo "下一步：reboot。起来后武装实验："
+    echo "  echo 1 | sudo tee /sys/module/tegra_camera_rtcpu/parameters/r32_camera_power"
+    ;;
 revert)
     n=0
     [ -f "$BOOT/Image.pre-variant" ] && { cp "$BOOT/Image.pre-variant" "$BOOT/Image"; n=$((n+1)); echo "  已还原 Image"; }
@@ -91,5 +106,5 @@ revert)
     status
     ;;
 status) status ;;
-*) echo "用法: $0 <A|B|revert|status>"; exit 2 ;;
+*) echo "用法: $0 <A|B|C|revert|status>"; exit 2 ;;
 esac
