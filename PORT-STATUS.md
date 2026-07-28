@@ -630,3 +630,60 @@ gpio 103 Level synaptics_dsx
 | 代价 | **每次内核实验必须机主在场** |
 
 配合已证实的「VE/ISPA 能干净上电」，这条路值得走。
+
+## 🔬 变体 B（纯 C 补丁）实测：**单独就足以炸掉内核**（2026-07-27/28）
+
+拆分变体的价值当场兑现 —— kernel-E 那次炸完什么都不知道，这次炸完**排除了一半**。
+
+**部署**：只换 Image（`bdf077cf`），DTB 保持 good（`2228d7ab`）一字节未动。
+**结果**：重启后 4 分钟内 —— 笔记本上 `lsusb` **完全看不到 `0955` 任何设备**、
+USB 和 WiFi 都不通、串口日志停在设备消失那一刻。
+
+→ USB gadget 由 `nv-l4t-usb-device-mode` 在 **T+19.4s** 创建，它连出现都没出现，
+说明 **probe 挂死发生在 T+19.4s 之前**，正落在那个补不上的盲区里。
+
+### 🔴 结论：元凶**不在** DT 那半
+
+我原本预测变体 B 更温和（DT 里没有 `power-domains`，`nvhost_module_busy()` 只会开时钟、
+不触发 genpd 上电）。**预测错了。** 纯 C 补丁单独就炸。
+
+嫌疑收窄到 patch 0003/0004 的这三处之一：
+1. `t19_nvcsi_info` 的 `.keepalive` / `.poweron_reset`（0004）
+2. `camrtc_device_group_busy()` 在 `tegra_cam_rtcpu_runtime_resume()` 里跨设备嵌套 `pm_runtime_get_sync()`（0003）
+3. `camrtc_device_group_reset()` 放在 `tegra_camrtc_deassert_resets()` 之前（0003）
+
+**下一轮继续二分**：先只上 0002+0004（不上 0003），或只上 0002+0003（不上 0004）。
+注意 0002 单独是纯增量函数定义，没有调用点，理论上是死代码 → 可以并入任一组作为对照。
+
+### ✅ 救援链路实战复验（这次是真用上了，不是演练）
+
+| 环节 | 结果 |
+|---|---|
+| WiFi | 重启**之前**就自己断了（路由抽风的老毛病，`wlan0 NO-CARRIER`） |
+| **USB 救援通道** | ✅ **救了场**：`192.168.55.100 ↔ 192.168.55.1`，1.757ms |
+| 进 RCM | ✅ 拔适配器（USB 保持插着）→ 重新上电 → `0955:7e19 APX`，Device 号 007→008 |
+| RCM 刷写树 | ✅ 真树在 `~/cyberdog-flash/xiaomi-sdk`（550M，工具齐全） |
+
+⚠️ **两个必须记住的坑**：
+1. `~/cyberdog-flash/Linux_for_Tegra` 是**残骸**（只剩 `bootloader/pyfdt`），真树是 `xiaomi-sdk`。
+   笔记本上还有个 `JetPack_6.2.2_..._ORIN_NANO_TARGETS` —— **那是 Orin Nano 的，绝不能用在 CyberDog 上**。
+2. **0726 的 `APP-raw.img` 不能直接写回**：里面 `boot-jp5/Image` 是 `f4b6a035`（r32cap 那批），
+   且 `extlinux.conf` 里 **ramoops 配置为 0**。写回会丢掉 ramoops 黑匣子 + 触摸板批次。
+   必须走「读出当前 p1 → 只改 Image → 写回」。
+
+**USB 通道已持久化**：笔记本上建了 nmcli 连接 `cyberdog-usb`（按 MAC `de:9f:89:2d:cf:82` 匹配 +
+autoconnect），重启后自动上线，不用再手工配地址。
+
+## 💡 HDMI 很可能是被忽略的控制台（待验证，可能部分替代串口）
+
+狗有 1 个 HDMI 口，而且：
+- 内核 cmdline 里有 **`console=tty0`** 和 **`fbcon=map:0`**
+- `/proc/consoles` 里**确实有 `tty0`**（`-WU (EC p )`，带 E=enabled、C=console）
+
+→ **接一台显示器很可能就能看到内核启动日志**，包括 probe 挂死时的最后几行 ——
+那正是 ttyGS0（T+19.4s 才存在）看不到的盲区。
+再配一个 USB 键盘（Extension 口转 USB-A）还能在 extlinux 菜单里选 `primary`（JP4 内核）自救，
+**不用走 RCM**。
+
+⏸️ 待机主用显示器验证。如果成立，这是「不能拆机、没有调试排针」这个死局的实际解法。
+局限：只能人眼看/拍照，无法自动落盘归档。
