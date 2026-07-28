@@ -872,3 +872,53 @@ R35 是把 `device-group.h` 的声明保留、定义删除 —— NVIDIA 通常*
 本轮写回的 `APP-current.raw` 是更早读出的，不含 `hung_task_panic`。
 狗起来后必须重新跑 `add-hungtask-panic.py` 补回（已补，复核 hung_task=1 / ramoops=1）。
 **每次 RCM 救砖后都要检查 extlinux 是否退回了旧版本。**
+
+## 🔴🔴 重大改判：变体 B / C 的「炸机」是构建脚本缺陷造成的假象（2026-07-28）
+
+**上面两节（变体 B 炸机、变体 C 也炸）的结论全部作废，不要再据此行动。**
+
+### 铁证
+
+| Image | `strings` 里的版本串 |
+|---|---|
+| 变体 B | `Linux version 5.10.216+` ❌ |
+| 变体 C | `Linux version 5.10.216+` ❌ |
+| kernel-E（full-build.sh 构建） | `5.10.216-tegra` ✅ |
+| good（部署中） | `5.10.216-tegra` ✅ |
+
+### 根因
+
+我的快捷构建脚本（build-variant-B/C.sh）**漏了 `export LOCALVERSION=-tegra`**。
+`athena_defconfig` 里只有 `# CONFIG_LOCALVERSION_AUTO is not set`，版本后缀全靠
+`full-build.sh` 的环境变量 —— 它一直有这行**且带 KREL 断言**，快捷脚本绕过它就把坑绕回来了。
+
+### 后果链（为什么看起来像挂死）
+
+版本串 `5.10.216+` → `/lib/modules/5.10.216-tegra/` 对不上 → **全部 36 个模块加载失败**：
+- 8821cu 没了 → **WiFi 失联**
+- USB gadget 的 function 模块（f_rndis/f_acm/f_ncm/mass_storage）没了 → **`nv-l4t-usb-device-mode` 起不来 → USB 也失联**
+→ 狗**活着但完全不可达**，从外面看与 probe 挂死**一模一样**。
+
+### 各结论的重新定性
+
+| 原结论 | 现状 |
+|---|---|
+| "变体 C 炸在 initrd 之后" | ❌ 假象。initrd gadget 出现过（initrd 用自带 busybox+builtin xudc，不依赖模块），switch_root 后模块全挂 → 失联。**内核本身多半是好的** |
+| "0002 是变体 C 炸点的头号嫌疑" | ❌ 大概率冤枉 |
+| "变体 B 炸在 probe 阶段（连 initrd 都没到）" | ⚠️ **存疑**。当时笔记本 xHCI 恰好猝死（`HC died` 时间窗吻合），initrd gadget 可能出现过但没被看见；模块失败假象同样适用。**不能再当定论** |
+| "元凶不在 DT 那半" | ⚠️ 随变体 B 一起降级为存疑 |
+| kernel-E 挂死（0726 A/B 撤除确认） | ✅ **仍然成立**——它是 full-build.sh 正确构建的 |
+
+### 已修（三个构建脚本）
+
+`build-variant-A/B/C.sh` 全部加上 `export LOCALVERSION=-tegra` +
+**产物版本串断言**（`strings Image | grep "Linux version 5.10.216-tegra "` 不中就构建失败）——
+错误必须在构建时响亮死掉，不能等部署后变成"幽灵失联"。
+
+### 方法论教训
+
+1. **绕过带断言的权威构建入口（full-build.sh）等于把它挡掉的坑全部请回来。**
+   快捷脚本可以省时间，但必须继承全部断言。
+2. **"失联"和"挂死"从外面不可区分**，下结论前必须先排除可达性层的失败
+   （模块、网络、gadget）。本轮两轮 RCM 救砖救的其实是"活着的狗"。
+3. 观察窗口被污染（笔记本 xHCI 猝死）时的结论要打上污染标记，不能与干净观察同权。

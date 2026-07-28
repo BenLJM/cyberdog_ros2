@@ -14,6 +14,13 @@
 # =============================================================================
 set -euo pipefail
 
+# 🔴 2026-07-28 血的教训：没有这个 export，内核版本串会变成 5.10.216+，
+# /lib/modules/5.10.216-tegra/ 对不上 → 所有模块(WiFi/USB gadget functions)
+# 加载失败 → 狗活着但完全失联，从外面看和 probe 挂死一模一样。
+# 变体 B/C 两轮"炸机"实为此假象，各走了一轮 RCM 救砖。
+# full-build.sh 一直有这行且带 KREL 断言 —— 快捷脚本绕过它就把坑绕回来了。
+export LOCALVERSION=-tegra
+
 SRC=/work/src/Linux_for_Tegra/source/public/kernel_src
 DTSDIR=$SRC/hardware/nvidia/platform/t19x/jakku/kernel-dts
 DTS=$DTSDIR/tegra194-p3668-0001-p2151-0000.dts

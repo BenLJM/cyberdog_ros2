@@ -16,6 +16,13 @@
 # =============================================================================
 set -euo pipefail
 
+# 🔴 2026-07-28 血的教训：没有这个 export，内核版本串会变成 5.10.216+，
+# /lib/modules/5.10.216-tegra/ 对不上 → 所有模块(WiFi/USB gadget functions)
+# 加载失败 → 狗活着但完全失联，从外面看和 probe 挂死一模一样。
+# 变体 B/C 两轮"炸机"实为此假象，各走了一轮 RCM 救砖。
+# full-build.sh 一直有这行且带 KREL 断言 —— 快捷脚本绕过它就把坑绕回来了。
+export LOCALVERSION=-tegra
+
 SRC=/work/src/Linux_for_Tegra/source/public/kernel_src
 DTS=$SRC/hardware/nvidia/platform/t19x/jakku/kernel-dts/tegra194-p3668-0001-p2151-0000.dts
 DGC=$SRC/kernel/nvidia/drivers/platform/tegra/rtcpu/device-group.c
@@ -70,4 +77,7 @@ echo "=== 3. 符号验证：R32 契约是否真的编进去了 ==="
 for s in camrtc_device_group_busy camrtc_device_group_idle camrtc_device_group_reset nvcsilp; do
     printf "  %-30s %s 次\n" "$s" "$(strings -a "$DEST/Image" | grep -c "$s" || true)"
 done
+# 版本串断言：错了必须响亮失败，不能等部署后变成"幽灵失联"
+strings -a "$DEST/Image" | grep -m1 "Linux version 5.10.216-tegra " \
+    || { echo "FATAL: 版本串不是 5.10.216-tegra！LOCALVERSION 又丢了"; exit 1; }
 sha256sum "$DEST/Image" | tee "$DEST/SHA256SUMS"
