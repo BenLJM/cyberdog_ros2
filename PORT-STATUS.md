@@ -1043,3 +1043,43 @@ R32 固件"接受"后按错位布局解析错误掩码/`status2vi_notify_mask` �
 对付「使能运行时退化且重发 ENABLE 救不回来」（0727 实测 11 小时后 ObstacleDetection 归零）。
 连续 2 次 0Hz 判死才重启栈；**栈非 active 时跳过**（绝不和相机实验打架，守卫已当场验证）；
 SoC≥85°C 拒绝动手；30 分钟冷却期防永动机；判决进 journal + kmsg 面包屑。
+
+## 🔬 变体 H：csi5 stream 全面 R32 化 —— 三重收获 + 墙再度前移（2026-07-28）
+
+### 变体 H 内容（构建/部署/实验全通，仍零帧）
+
+在 G 之上把 csi5 的三个 stream 函数整体改为 **R32 忠实实现**（同一个运行时门控）：
+1. **传输方式**：R35 走 per-VI-channel 请求-应答并等回包 → R32 是
+   `tegra_capture_ivc_control_submit()` **发射后不管**（`TEMP_CHANNEL_ID=65`，固件不回包）。
+   这顺带解释并消灭了 `csi5_stream_close: Error in closing`（在等一个永远不会来的回包）
+   和全部 `NULL VI channel` 噪音。
+2. **`nvcsi_error_config` 全零**（R32 从不填它 —— 布局错位问题就此绕开）。
+3. **CIL 数值 R32 语义**：`cil_clock_rate=204000`（R35 已弃用的字段）、DPHY `t_clk_settle=33`、
+   `lp_bypass_mode=!discontinuous_clk`、`mipi_clock_rate=pixel_clk/1000`。
+
+实测（消息全部发出且干净）：
+```
+r32-csi5: STREAM_SET_CONFIG stream=0 port=0 lanes=1 cphy=0 settle=0 lp_bypass=0 mipi=80000kHz rc=264
+r32-csi5: PHY_STREAM_OPEN  stream=0 port=0 rc=264      (rc=264=整包提交成功)
+```
+
+### RCE 固件视角取证（rtcpu trace + ftrace）
+
+- `tegra_rtcpu_trace/stats`：**Exceptions=0**，Events 252→439（固件活着且在处理流量）
+- ftrace `events/tegra_rtcpu` 采集窗口内：**只有 `vi5_hwinit` 一条字符串，
+  零 VINOTIFY / 零错误事件** → **SOF 从未到达 VI**
+
+### 定性：墙在 CSIMUX 匹配层
+
+传感器在发（实测）→ PHY 已校准 → NVCSI 已按 R32 配置 → **但 VI 的 CSIMUX 匹配过滤把像素全丢了**
+（匹配不命中连事件都不会产生 —— 与观察精确一致）。
+
+**下一个精确工作项**：`vi_channel_config`（ch_cfg）**内部**的 match/csimux 字段逐位审计。
+backport 的 static_assert 只锁了外层（`capture_descriptor==704`、`config==216`），
+**ch_cfg 内部布局两代分叉**（R32: `fm_cfg`/`fm_result`；R35: `pfsd_cfg`），
+且填值的是 R35 的 vi5_fops 语义。审计对象：
+- R32 vs R35 `struct vi_channel_config` 全字段（尤其 match/stream/vc/dt 过滤）
+- `build/r32-capture-backport/0002` 里 setup 消息的填值代码
+
+### 判据保持不变
+`/tmp/frames.raw > 0` 字节（`r32-frames-experiment.sh`）。
