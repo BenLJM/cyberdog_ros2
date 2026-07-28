@@ -2152,3 +2152,50 @@ lane 极性 ✅ 描述符与消息 ABI ✅ trace 解码 ✅
    接收态。剩下的可能性偏向"某个 R32 期待的前置状态由 R32 内核在别处建立，
    而我们还没找到那一处" —— 这类东西只能靠拿到 **R32 的 nvcsi/csi5 内核源**
    逐函数比对。
+
+### 🔓 拿到 R32.5.2 的公开内核源（本轮最有价值的资产）
+
+容器有网络，直接取到了**狗上跑的那个版本**的官方源码：
+
+```
+https://developer.download.nvidia.com/embedded/L4T/r32_Release_v5.2/sources/T186/public_sources.tbz2   (174 MB)
+  └─ Linux_for_Tegra/source/public/kernel_src.tbz2 (132 MB)
+       └─ kernel/nvidia/drivers/media/platform/tegra/camera/{csi,nvcsi,vi}/
+          kernel/nvidia/drivers/video/tegra/host/nvcsi/
+```
+
+已抽出并固化到容器 **`/work/r32-reference/`**（62 个文件，800 KB）——
+以后任何「R32 到底怎么做的」都能直接查，不用再猜。
+
+### stage19：拿 R32 原版一比，stage6 漏了最关键的一半
+
+R32 的 `csi5_mipi_cal()` 在调 `tegra_mipi_calibration()` **之前**还写四次 PHY 寄存器：
+
+```c
+cila = (1<<E_INPUT_LP_IO0)|(1<<E_INPUT_LP_IO1)|(1<<E_INPUT_LP_CLK)
+     | (0<<PD_CLK)|(0<<PD_IO0)|(0<<PD_IO1);
+csi5_phy_write(chan, csi_port>>1, CIL_A_BASE + PAD_CONFIG_0, cila);
+csi5_phy_write(chan, csi_port>>1, CIL_B_BASE + PAD_CONFIG_0, cilb);
+csi5_phy_write(chan, csi_port>>1, CIL_A_SW_RESET, SW_RESET1_EN|SW_RESET0_EN);
+csi5_phy_write(chan, csi_port>>1, CIL_B_SW_RESET, SW_RESET1_EN|SW_RESET0_EN);
+```
+
+`E_INPUT_LP_*` 是 **D-PHY 低功耗输入接收器的使能位**，`PD_*` 是**下电位**。
+stage6 当初照 csi4 写、并**刻意跳过了这一段**（以为 prod settings 会管）——
+**那个假设是错的**。补上后实测 `r32-padcfg: cila=0x700000 cilb=0x640000`，
+与 R32 逐位一致。
+
+> 顺带解释了 stage15 为什么读到数据类型表：PHY 块在
+> `iomem_base + CSI5_BASE_ADDRESS(0x011000) + CSI5_PHY_OFFSET(0x010000)*index`，
+> port4 ⇒ index2 ⇒ **0x031000**，我读的是 0x30000，差了 0x1000。
+> （`csi5_registers.h` 两代逐字节相同，已 diff 验证。）
+
+### stage20：pad 配置的重跑时机（与 0004 的 keepalive 冲突）
+
+pad 配置 + 校准挂在 `finalize_poweron` 且被 `nvcsi->on` 守卫，一次开机只跑一次；
+而补丁 0004 的 `keepalive = true` 让 NVCSI 不再掉电 ⇒ 永不重跑。
+可日志里有 `r32-power: group_reset` —— **复位会把 NVCSI 寄存器清掉**。
+R32 上 NVCSI 会在会话间掉电、每次采集前重跑一遍。stage20 在 CSI 流启动时补跑，
+实测 `r32-recal: pad+cal rerun rc=0`。
+
+**两者都是与 R32 对齐的真实修正，但仍然零帧。**
