@@ -1379,3 +1379,42 @@ CHANNEL_SETUP 填值 ✅ / **描述符可见性(dma_sync)** ✅
 直接 `systemctl start jp5-cyberdog-stack`，让出厂相机节点按它自己的设计跑。
 这既是最真实的验证，也绕开了所有手工触发的复杂度。
 ⚠️ 红线仍在：不对 active 的 `camera_server` 调 configure —— 让它自己走。
+
+## 🎯 出厂 argus 全链路已打通到用户态最后一层：`RESULT_INVALID_STATE`（2026-07-28 终点）
+
+**这是本工程真正的目标场景**，全部按出厂设计走，红线全程遵守：
+```
+门控武装 + rtcpu rebind (ve=1 ispa=1)  →  systemctl start jp5-cyberdog-stack
+  →  出厂 camera_server 自行到达 active [3]        ← 未碰它的 lifecycle
+  →  ros2 service call /mi1045904/camera_service {command: 1}   ← TAKE_PICTURE
+```
+**结果**：`CameraService_Response(result=5)` = **`RESULT_INVALID_STATE`**，
+内核层零活动（`timed out` 0 / `r32-abi` 0 / `r32-vi5` 0）。
+
+→ 请求在**用户态就被拒绝**，根本没走到 argus → ioctl → reloc。
+
+### 关键定位：`camera_server` 自认为相机不可用
+
+它是 `active [3]`（lifecycle 层正常），但业务层判定 INVALID_STATE。
+最可能：**启动时打开相机失败并记住了失败状态**，之后拒绝一切拍照请求。
+
+⚠️ **诊断被挡住**：栈日志里 `camera` 相关记录 **0 条** ——
+又是 `chroot … su - mi -c` 无 tty 吞 stdout 的老问题（0727 已记档，影响面比想象的大）。
+**下一轮第一件事就是把这个观测性缺口补上**，否则用户态问题全是瞎子摸象。
+
+### 下一轮的三步（顺序不可换）
+
+1. **补观测性**：改 `jp5-stack-inner.sh`，把内层输出抓进变量再逐行 echo
+   （与 `cyberdog-sensors-enable.sh` 同一修法，已验证有效），
+   或直接让出厂节点日志落到 `/mnt/jp4/tmp/stack.log`。
+2. **读 camera_server 的真实报错**，确定 INVALID_STATE 的来源
+   （最可能是 argus `CameraProvider` 创建失败 —— 0725 见过 `Error IoctlFailed`）。
+3. 按报错定位，再决定是内核侧还是用户态侧的修复。
+
+### 本轮净收获
+
+- **确认了完整的目标调用链可达**：门控 → 出厂栈 → camera_server active → 业务 service
+- **确认拒绝发生在用户态**（内核零活动是硬证据），内核侧不用再盲改
+- 找到了 `/mi1045904/camera_service`（`interaction_msgs/srv/CameraService`，
+  `TAKE_PICTURE=1`）这个正确的触发入口
+- 红线遵守记录：全程未对 active 的 `camera_server` 调 configure
