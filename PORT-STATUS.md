@@ -831,3 +831,44 @@ panic → 热重启 → **还是同一个坏内核** → 再 panic → **无限�
 **产物**：`build/nvcsi-variants/C-gated/Image`，sha256 `8bc45ee7f8d4fd1f…`
 符号验证：`r32_camera_power` 1 / `camrtc_device_group_busy` 1 / `camrtc_device_group_reset` 1 /
 **`nvcsilp` 0**（确认不含 0004）。
+
+## 🔴 变体 C 也炸了 —— 我的"开关默认关⇒必然安全"是未经验证的假设（2026-07-28）
+
+**推理错误**：我把"开关默认关"直接等同于"行为等价 pristine"，但变体 C 相对 good 内核
+实际引入了**两处**变化，我只审了其中一处：
+
+| 变化 | 我的判断 | 实际 |
+|---|---|---|
+| 注入的三处 gated 调用 | 开关关 ⇒ 不执行 | 大概率成立（initcall 确实跑完了） |
+| **patch 0002 的函数定义** | "纯死代码，无调用点" | **未经验证的假设** |
+
+R35 是把 `device-group.h` 的声明保留、定义删除 —— NVIDIA 通常**成对处理**。
+我没核实"补回定义后是否有别处引用被激活"就下了"安全"结论。
+
+### 但这次并非白炸 —— 两个硬事实
+
+1. **`usb 3-5: Product: CyberDog JP5 initrd` 的 gadget 出现了**（存在 10 秒后正常交接）
+   → **内核所有 initcall 跑完了** → **运行时开关确实挡住了 probe 阶段的挂死**，
+   变体 C 的核心设计是有效的。
+2. 挂死落在 **initrd 之后、`nv-l4t-usb-device-mode`(T+19.4s) 之前** ——
+   与变体 B（连 initrd gadget 都没出现）**是两种不同的故障**。
+3. 6 分钟内**没有热重启** → 这个挂死既不是 `hung_task` 也不是 `softlockup` 能抓到的类型。
+
+### 🔑 第 2 点的推论：initrd 守卫这次够得着
+
+既然挂死在 initrd 之后，**initrd 里的启动尝试计数器已经递增过**。
+→ 下一步该改的是**流程**而不是补丁：做成「一次性实验启动项」
+
+```
+① good 系统里：实验内核放 /boot-jp5/Image.exp，加 LABEL jp5-exp，DEFAULT 指向它
+② initrd 守卫加一句：发现本次启动的是 jp5-exp → 立刻把 DEFAULT 改回 jp5
+③ 若挂死 → 只需拔电重启一次 → 直接走 good 内核，零 RCM
+```
+成本从「两次拔电 + 4 分钟 RCM 刷写」降到「一次拔电」。
+**后续每一步二分都依赖这套机制，否则代价不可持续。**
+
+### ⚠️ RCM 写回会冲掉 extlinux 的后续改动
+
+本轮写回的 `APP-current.raw` 是更早读出的，不含 `hung_task_panic`。
+狗起来后必须重新跑 `add-hungtask-panic.py` 补回（已补，复核 hung_task=1 / ramoops=1）。
+**每次 RCM 救砖后都要检查 extlinux 是否退回了旧版本。**
