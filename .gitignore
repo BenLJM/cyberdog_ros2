@@ -34,3 +34,4 @@ build/nvcsi-variants/good-deployed.dtb
 build/nvcsi-variants/C-gated/Image
 build/nvcsi-variants/G-stage2/Image
 build/nvcsi-variants/H-stage3/Image
+build/nvcsi-variants/J-stage5/Image
