@@ -1304,3 +1304,38 @@ ERROR <create_vid_enc_bin:3220> Elements could not link encoder & parser
 好处：验证链完全不依赖 chroot 用户态，排障面积小得多。
 做法：在 `vi_capture_request()` 里门控调用同一个 reloc 函数
 （注意它现在从 `req->reloc_relatives` 读用户态指针，内核内部路径需要一个不走 `copy_from_user` 的变体）。
+
+## ⏳ 路线 A-1（maincamera）：用户态起来了，但没触发采集（2026-07-28 最终）
+
+`maincamera` **确实链接 `libnvargus.so`**（`ldd` 证实），是走 ioctl 路径的正确用户态。
+
+**进展**：
+- `nvargus-daemon` 起来了（关键：必须 `setsid ... </dev/null >log 2>&1 &` **完全脱离**，
+  否则会拖住 ssh；且**永远别在脚本里调 `nvargus-daemon --help`** —— 它前台阻塞）
+- `maincamera` 起来了：`CameraServerNode: Creating node camera_server` → `CameraContext: initialize`
+
+**但内核层仍未被触及**：`timed out` **0 次**、`r32-abi` **0 次**。
+
+**原因**：`maincamera` 是 **ROS2 lifecycle 节点** —— 只做了 initialize，
+真正开流要靠 ROS service 触发（出厂设计），光起进程不会走到 `VI_CAPTURE_REQUEST`。
+另见 `(Argus) Error OverFlow: Server already operational` —— argus RPC server 有实例冲突，
+以及老朋友 `nvbuf_utils: Could not get EGL display connection`。
+
+### 🎯 下一轮建议改走**路线 B**（把 reloc 挂到内核内部路径）
+
+路线 A 的三次尝试都卡在**用户态的复杂度**（GStreamer 编码器链 / EGL / ROS lifecycle / argus RPC 冲突），
+每一层都与本工程的内核改动无关，纯属排障噪音。
+
+**路线 B 的优势**：
+- `v4l2-ctl` 一条命令即可验证，**完全不依赖 chroot 用户态**
+- 排障面积从「四层用户态」缩到「一个内核函数」
+- 出图后再回头修用户态，因果链清晰
+
+**做法**：在 `vi_capture_request()`（内核内部路径）里门控调用 reloc。
+⚠️ 现有 `r32_reloc_vi_capture_request_buffers_locked()` 从 `req->reloc_relatives`
+读**用户态指针**（`copy_from_user`），内核内部路径需要一个不走 `copy_from_user` 的变体 ——
+或者更简单：v4l2 路径下 `num_relocs=0`，只需要把 `atomp` 里已经写好的 IOVA
+按 R32 范式做一次 `dma_sync` + 就地写回即可（stage4 已经写了地址，缺的是 reloc 语义的其余部分）。
+
+**先读**：`0002` 补丁里 `r32_reloc_vi_capture_request_buffers_locked()` 全文
+（`build/r32-capture-backport/0002-*.patch` 第 163-315 行），看它除了 reloc 还做了什么。
