@@ -2491,3 +2491,67 @@ v4l2-ctl -d /dev/video1 --stream-mmap --stream-count=5 --stream-to=/tmp/v4l2-fra
    注意 13MP@30fps = 787 MB/s，需要降采样/降帧率，或只在需要时抓单帧。
 
 **探针**：`tools/camera-probes/v4l2-direct.sh`（含完整判决逻辑与红线保护）。
+
+---
+
+## 🏁 AI 相机端到端打通：v4l2 → ROS2 桥
+
+### 成品
+
+| 件 | 部署路径 |
+|---|---|
+| 节点本体 | `/mnt/jp4/opt/ai-camera/ai-camera-node.py`（chroot 内） |
+| chroot 启动器 | `/mnt/jp4/home/mi/ai-camera-inner.sh` |
+| 宿主启动器 | `/usr/local/bin/ai-camera-bridge.sh` |
+| 服务单元 | `/etc/systemd/system/ai-camera-bridge.service`（已 enable，`WantedBy=jp5-cyberdog-stack`） |
+
+**话题**：`/mi1045904/ai_camera/image_raw`（`sensor_msgs/Image`, rgb8）
++ `/mi1045904/ai_camera/camera_info`
+
+**实测**：源 4208×3120 RAW10 **30 fps 零丢帧**（帧间隔 33.0ms，序号连续）；
+输出 1052×780 rgb8 @ **4.4 fps**；独立订阅者 20 秒收到 89 帧，载荷 2,461,680 字节。
+与出厂栈**共存**（`jp5-cyberdog-stack` 保持 active、0 failed、35 个 ROS 节点）。
+
+### 为什么必须 rebind rtcpu（启动器的核心动作）
+
+出厂 `camera_server` 会先用 argus 试一遍（在 JP5 上必然零帧），失败后 VI/RCE
+留在半开状态。此时 v4l2 取流会「通道建得起来但收不到帧」，dmesg 是
+`uncorr_err: request timed out after 2500 ms` + `err_rec: ... reset the capture channel`。
+对 `bc00000.rtcpu` 做一次 unbind/bind 让 RCE 干净重来之后，**栈保持运行也能正常取流**。
+
+🔴 红线遵守：全程不对 active 的 `camera_server` 调 configure。
+
+### 三个把 30fps 压成 3fps 的坑（都实测定位，不是猜的）
+
+**① `set -u` 撞 ROS 的 setup.bash（服务静默退出，零日志）**
+setup.bash 内部引用一堆未定义变量（`AMENT_TRACE_SETUP_FILES`/`COLCON_TRACE`…），
+`set -u` 会让 bash 在第一行 source 就退出；那行又带 `2>/dev/null`，
+于是**连报错都看不到**，表现为「服务起来就退、一条日志没有」。
+⇒ source ROS 环境之前不能开 `set -u`。
+
+**② `Image.data` 赋 `bytes` → Foxy 逐元素断言，~2 秒/帧（真凶）**
+Foxy 生成的 setter 只对 `array.array('B')` 走快路径，其它类型掉进
+`__debug__` 里的 `all(isinstance(v,int) and 0<=v<256 for v in value)` ——
+246 万个字节的 Python 循环。**取流从 30fps 被压到 3fps。**
+⇒ `m.data = array.array('B', rgb.tobytes())`。改完直接 3.1 → 19.5 fps。
+
+⚠️ 中途我猜「VI 的 DMA 缓冲是 write-combining，大步长读有读放大」并照此改了代码 ——
+**猜错了**。逐步计时打脸：整帧 26MB memcpy 只要 26.1ms，旧的直接抽点读只要 8.3ms，
+全部 numpy 步骤加起来 ~50ms。**性能问题必须先计时再动手。**
+
+**③ 按帧计数节流会被取流速率牵连**
+「每 6 帧发一次」在取流掉到 20fps 时就变成 3.3fps 而不是要的 5fps。
+⇒ 改成按墙钟节流（`now - t_last_pub >= 1/fps`），与取流速率解耦。
+
+另外加了「**排空到最新帧**」：源 30fps 而我们只处理 5fps，队列长期是满的，
+直接取队首拿到的是最旧那帧（延迟 ≈ NBUF/30 ≈ 200ms）。
+先把已就绪的全取出、除最后一帧外立刻归还 ⇒ 延迟降到一帧内
+（实测：取 24.4 fps / 发 4.4 fps / 每 10 秒丢弃 176 帧过期帧）。
+
+### 已知边界
+
+- **4.4 fps 是这个设计的天花板**（每轮处理+发布约 227ms）。要更快就调大
+  `AI_CAM_BIN`（4 → 526×390 = 615KB/帧）或把处理挪到 C。
+- **没有标定**：`camera_info` 里给的是几何合理的占位内参（f≈宽度），标定后需替换。
+- 传感器只报一个模式（4208×3120@30），无法用 v4l2 要更小的分辨率，降采样只能在 CPU 做。
+- 每帧都必须 DQBUF/QBUF（否则驱动缓冲耗尽彻底停流），只是不处理不发。

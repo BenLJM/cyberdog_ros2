@@ -1,0 +1,61 @@
+[Unit]
+Description=CyberDog AI 头顶相机 v4l2 → ROS2 桥 (ov13b10, 绕开 argus)
+Documentation=file:/usr/local/bin/ai-camera-bridge.sh
+
+# 排序: 栈先起来(camera_server 会先用 argus 试一遍并失败, 我们随后 rebind rtcpu
+# 让 RCE 干净重来 —— 顺序反了的话 camera_server 的失败会把我们刚整好的状态弄脏)
+After=jp5-cyberdog-stack.service
+Wants=jp5-cyberdog-stack.service
+
+# 与栈同生共死(同 d455-camera.service): 对栈的显式 stop/restart 传播到本单元。
+# 故意不用 BindsTo —— 栈自身 Restart=on-failure 的内部重启不该连累相机。
+PartOf=jp5-cyberdog-stack.service
+
+# 限流: 15 分钟内最多 5 次。每次启动都要 rebind rtcpu + 等 5 秒, 不能做永动机。
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# chroot 的 dev / dev-pts / dev-shm / proc / sys / run-udev bind 必须先到位,
+# 否则 chroot 里看不到 /dev/video1。After= 只排序不是依赖, 显式跑一次(幂等)。
+ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
+ExecStart=/usr/local/bin/ai-camera-bridge.sh
+
+# ── 带宽档位 ──────────────────────────────────────────────────────────────
+# 源是 4208x3120 RAW10 @30fps = 787 MB/s, 不可能整帧发。
+#   AI_CAM_BIN=2 → 输出 1052x780 rgb8 = 2.46 MB/帧
+#   AI_CAM_FPS=5 → 每 6 帧发一次 ≈ 12 MB/s
+# 要更省就调大 BIN(4 → 526x390 = 615KB/帧)或调小 FPS。
+# ⚠️ 每帧都会 DQBUF/QBUF(必须, 否则驱动的四个缓冲会耗尽), 只是不处理不发。
+Environment=AI_CAM_BIN=2
+Environment=AI_CAM_FPS=5
+Environment=AI_CAM_NS=/mi1045904
+
+# 自动电平: 按每帧 99.5 分位拉伸到 8 位。关掉的话用固定线性映射 + AI_CAM_GAIN。
+# 暗场(夜里/镜头遮挡)时分位数接近黑电平, 代码会兜底走线性压缩而不是除零。
+Environment=AI_CAM_AUTOLEVEL=1
+Environment=AI_CAM_GAIN=1.0
+
+# 传感器模拟增益(v4l2 控件, 16..241)。不设则用驱动默认。
+# 实测噪声随之单调放大(16/64/128/200 → 标准差 184/193/218/252), 是真模拟增益。
+# Environment=AI_CAM_SENSOR_GAIN=64
+
+Restart=on-failure
+RestartSec=20
+# 78 = 缺文件/没跑带 r32 补丁的内核, 重试无意义 -> 躺平等人修
+RestartPreventExitStatus=78
+# 143 = 128+SIGTERM, 正常停机(以及栈 stop 经 PartOf 传播)就是这么退的
+SuccessExitStatus=143
+
+KillMode=control-group
+TimeoutStopSec=20
+
+# 相机永远让路给运动栈
+Nice=5
+CPUWeight=50
+
+[Install]
+# 装在栈的 .wants 下: 栈起 -> 桥起; 栈被 stop -> PartOf 把桥也带走
+WantedBy=jp5-cyberdog-stack.service
