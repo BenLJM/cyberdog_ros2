@@ -2351,3 +2351,37 @@ JP4 采集期间的 dmesg **没有任何采集错误** —— 只有 RCE 的两�
 > 🔧 **新增能力**：JP4 在线对照现在是**可安全重复**的手段
 > （脚本在 JP4 的 `/usr/local/bin/jp4-baseline.sh`，装上 `.service` 的自启链接即可再跑一次）。
 > 下一轮可以用它抓任何需要的 JP4 侧数据 —— 这是本工程第一次有了「与工作系统直接对照」的能力。
+
+### 🔬 JP4 ↔ JP5 函数级直接 A/B（同场景 ftrace）
+
+用 JP4 对照能力做的第二个实验：两边跑同一个 `START_LIVE_STREAM`，
+ftrace 同一套过滤器，统计内核相机函数调用。
+
+| 函数 | JP4（工作） | JP5（不工作） | 判读 |
+|---|---|---|---|
+| `vi_capture_ivc_status_callback` | **324** | **0** | 帧完成回调 —— JP4 真的在收帧 |
+| `vi_capture_status` | 163 | 0 | |
+| `camera_common_s_power` | 122 | 0 | |
+| `tegra_channel_set_power` | 111 | 0 | |
+| **`tegra_csi_s_power` / `tegra_csi_power`** | **74 / 74** | **0 / 0** | **CSI 上电链** |
+| **`vi5_power_on` / `vi5_power_off`** | **38 / 54** | **0 / 0** | **VI 上电链** |
+| **`csi5_power_on` / `csi5_power_off`** | **19 / 18** | **0 / 0** | = `nvhost_module_busy` |
+| `tegra_channel_open` | 38 | 19 | 两边都有 |
+| `ov13b10_set_gain/exposure` | 68 / 30 | 0 / 0 | JP4 在跑 AE |
+
+**核心差异：JP4 采集期间会反复走 CSI 与 VI 的 nvhost 上电链，JP5 一次都不走。**
+
+`csi5_power_on()` 两代**实现完全相同** —— 就是 `nvhost_module_busy(csi->pdev)`，
+它走 runtime-PM 的 poweron，从而让 `finalize_poweron`
+（stage2 的 prod+校准、stage19 的 CIL pad 配置）**在采集当下**执行。
+我们的 stage9/11 只补了「开流」，**漏了「上电」**，而 R32 的顺序是先上电再开流。
+
+### stage22：补上 CSI 的 nvhost 上电（仍零帧）
+
+在 `nvcsi_r32_start_streams()` 开流之前调 `csi->fops->csi_power_on(csi)`。
+实测 `r32-csipwr: csi_power_on rc=0` 生效，**但仍然零帧**。
+
+⇒ **A/B 表里还有未处理的差异**，最显眼的是
+**`vi5_power_on` / `vi5_power_off`（JP4 38/54，JP5 0/0）—— VI 侧的同类缺口**，
+以及 `tegra_csi_s_power`（我直接调了 `csi_power_on`，但没走 subdev 的 `s_power` 路径，
+后者还会连带做别的事）。**下一轮就补这两条**，A/B 表已经把清单列好了。
