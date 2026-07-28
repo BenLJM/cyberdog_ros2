@@ -2050,3 +2050,54 @@ Irq#  Count   Runtime  Max rt  Name
    ⇒ 不需要 swizzle，stage3 的清零是对的。
 3. **PHY/CIL 寄存器的链路状态**：stage15 的 dump 偏移取错了（读到的是数据类型表）。
    要读 `CSI5_PHY_OFFSET = 0x010000` 那一族里的链路/错误状态。
+
+### ✅ 排除最大假设：RCE **接受了**全部 CSI 配置（stage16）
+
+之前 stage3 的三条 CSI 消息是 **fire-and-forget**，且把 `channel_id` 硬编码成
+`R32_TEMP_CHANNEL_ID = 64+1 = 65`。而 capture-ivc 的路由约定是：客户端必须先
+`tegra_capture_ivc_register_control_cb(cb, &trans_id, priv)` **申请**一个 trans_id
+（范围 `[NUM_CAPTURE_CHANNELS, TOTAL_CHANNELS)`），RCE 的应答才会路由到自己的回调。
+硬编码 65 意味着应答被丢，甚至可能串到别的客户端的槽位上。
+
+stage16 改成正规流程（申请 → 提交 → 等 250ms → 查 result → 注销；
+拿不到 trans_id 时退回原行为）。实测：
+
+```
+r32-resp: STREAM_SET_CONFIG result=0 (0=OK) trans_id=70
+r32-resp: PHY_STREAM        result=0 (0=OK) trans_id=71
+…六条消息全部 result=0
+```
+
+**RCE 收到了、处理了、并且接受了每一条 CSI 配置。** 这条最大的未验证假设就此排除，
+同时 stage16 本身是个真实的正确性修复（消除了硬编码 trans_id 的串槽风险）。
+
+### 当前的完整证据面（软件能控的都已验证正确）
+
+| 环节 | 状态 |
+|---|---|
+| 传感器发射 | ✅ 逐寄存器验证（chip_id / 分辨率 / HTS / streaming 位） |
+| MIPI 校准 | ✅ 真执行且 `tegra_mipi_wait` 返回 0 |
+| CIL 低功耗时钟 | ✅ `nvcsilp enable_cnt` 0→2（补丁 0004） |
+| NVCSI 数据路时钟 | ✅ 314 MHz = BPMP 硬上限 |
+| CSI 配置内容 | ✅ `stream=4 port=4 lanes=4 settle=19 mipi=448000kHz` |
+| CSI 配置时序 | ✅ 在 VI 通道建立之后 |
+| **RCE 是否接受** | ✅ **六条消息全部 `result=0`** |
+| VI 包匹配 | ✅ one-hot：stream4 / VC0 / RAW10 |
+| lane 交换/极性 | ✅ 出厂 DTB 同样没有 ⇒ 不需要 |
+| 描述符 / 消息 ABI | ✅ 布局与消息 ID 逐字段核过 |
+| **NVCSI 中断** | ❌ **Δ=0（VI 却有 Δ=413）** |
+
+**软件侧已无可查之处** —— 所有能配置的都配置对了，RCE 也确认接受了，
+但 CSI 接收器在链路层依然完全静默。
+
+### 下一轮唯一剩下的方向
+
+问题已窄到「**RCE 接受了配置，但 NVCSI 硬件没有真正进入接收状态**」。
+可查的只剩两条，都需要看寄存器：
+
+1. **PHY/CIL 链路状态寄存器**（`CSI5_PHY_OFFSET = 0x010000` 那一族）——
+   stage15 的 dump 偏移取错了（读到的是数据类型配置表）。需要 T194 的 NVCSI
+   寄存器映射，树里没有，可能要从 R32 内核源或 TRM 找。
+2. **R32 固件在 PHY 上电/使能上是否还有一步没做** —— 比如 `PHY_STREAM_RESET`、
+   或 `NVCSI_IOCTL_DESKEW_SETUP/APPLY`（用户态 ioctl，argus 在 R32 上可能会调，
+   而我们的 R32 argus 没调 —— 值得用 strace 核一遍它有没有开 `/dev/nvhost-nvcsi`）。
