@@ -1858,3 +1858,80 @@ ISP 通道 ✅   VI 通道 ✅   RCE 握手 ✅   描述符下发 ✅
 > 目前最好的实验状态是**变体 P**（Image `1eb4f2ad` / DTB `9562d2d7`）：
 > 传感器出流、CSI 配置参数与时序全对、无 VI/ISP 回归，只是零帧。
 
+
+### 🔑 找到并补上了一个真实缺失：NVCSI 的 CIL 低功耗时钟（补丁 0004）
+
+排除完 `match` 之后（见下），回头审构建脚本里那条一直存在的断言
+`nvcsilp=0 ✅（仍不含 0004）` —— 补丁 **0004-t194-nvcsi-vi-r32-clocks-keepalive**
+被每个变体刻意排除了。它的内容正对症：
+
+```c
+/*
+ * R32 parity: the CIL low-power clock.  R35 dropped it (and the matching DT
+ * property) because its own RCE firmware programs NVCSI clocks over BPMP.
+ * The factory R32 firmware expects the kernel to have enabled both.
+ */
+{"nvcsilp", 204000000},
+...
+.poweron_reset = true,
+.keepalive     = true,
+```
+
+**现场实测坐实**：
+
+```
+nvcsilp:  enable_cnt = 0   prepare_cnt = 0   rate = 204 MHz    ← 从未被使能
+nvcsi:    enable_cnt = 1   prepare_cnt = 1   rate = 314 MHz
+```
+
+没有 CIL 低功耗时钟，CIL 检测不到 LP→HS 跳变 —— 接收端字面意义上什么都看不见，
+与「零中断零帧零错误」完全吻合。DT 侧（`camera-power.dtsi`）本来就已经声明了
+`clocks = <NVCSI>, <NVCSILP>`，缺的只是内核侧的时钟表。
+
+变体 T（P + 0004）实测：**`nvcsilp enable_cnt` 0 → 2，时钟真的起来了**，传感器照常出流。
+⚠️ 但**仍然零帧**。且注意 `nvcsi` 停在 **314 MHz**（0004 请求 400 MHz，父时钟
+`pll_nvcsi` 无上限限制）—— 这是下一条线索。
+
+> ⚠️ 打补丁顺序：0004 必须在 stage2 **之后**打 —— 两者都改 `t194.c` 的
+> `t19_nvcsi_info`，先打 0004 会让 stage2 的 `.can_powergate` 锚点失配。
+
+### 排除掉的：VI 通道的包匹配条件完全正确
+
+stage13 挂在 `vi5_setup_surface` 上，实测 `r32-vi5` 计数为 **0** ——
+**stage4/13 在 argus 路径下也是死代码**（`vi5_setup_surface` 属 v4l2 路径；
+argus 自己在用户态填整个描述符）。这已是本工程**第三次**踩「改了没被走到的路径」
+（stage3 / stage8 / stage4）。
+
+stage14 改挂真正被调用的 `vi_capture_request`，读出 argus 填的匹配条件：
+
+```
+r32-match: dt=0x2b/0x3f  stream=16/0x3f  vc=1/0xffff
+```
+
+`stream=16` / `vc=1` 乍看是错的，但内核自己的参考实现给了权威答案：
+
+```c
+desc->ch_cfg.match.stream = (1u << nvcsi_stream); /* one-hot bit encoding */
+desc->ch_cfg.match.vc     = (1u << chan->virtual_channel); /* one-hot bit encoding */
+```
+
+**是 one-hot 位编码** ⇒ `16 = 1<<4` = stream 4 ✅、`1 = 1<<0` = VC0 ✅、
+`0x2B` = RAW10 ✅。匹配条件完全正确。
+
+### 排除掉的：发射侧逐寄存器验证通过
+
+采集进行中直接读传感器 I2C：
+
+| 寄存器 | 读回 | 期望 |
+|---|---|---|
+| `0x300a/0b` chip_id | 0x560D | ov13b10 ✅ |
+| `0x3808/09` X_OUT | 4208 | DT `active_w` ✅ |
+| `0x380a/0b` Y_OUT | 3120 | DT `active_h` ✅ |
+| `0x380c/0d` HTS | 1176 | DT `line_length=4704` = 1176×4 ✅ |
+| `0x0100` | 0x01 | streaming ✅ |
+
+### 排除掉的：RCE trace 解码本身没问题
+
+全量事件统计：只有 6 个 `rtcpu_string` + 1 个 `rtcpu_start`，
+**未知类型事件 0 个** ⇒ 解码器没在丢记录，「三计数全 0」是真的 ——
+RCE 确实没观察到任何 VI 活动。
