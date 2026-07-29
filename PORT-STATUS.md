@@ -2907,3 +2907,63 @@ LCM 载荷 = 8 字节 fingerprint + 大端字段，逐个对上：
 🔴 **红线**：本阶段目标是「装好但不发射」。不发任何可能动电机的指令、不 kill 工厂
 控制器、机主不在场不留任何 armed 状态。**安全基础设施必须在电池到货前完成**——
 这是一台十几公斤、12 个力控关节（单关节 24 Nm）、**没有硬件急停**的机器。
+
+---
+
+## 🛟 备份救援体系 + 运动安全层（2026-07-30）
+
+机主指示：「按照计划进行吧，动手前确保有备份拯救的措施。」两步走。
+
+### 第一步：备份救援措施（动运动控制之前的前置）
+
+| 资产 | 处理 | 依据 |
+|---|---|---|
+| **QSPI 32MB** | **入库**（此前 git 追踪 0 文件） | 这台狗独有、不可再生、砖机时唯一恢复源。有效性已验：32MB 整、93.9% 非零、256 种取值 |
+| `build/mirror` 4.7G | **清单 + 重建脚本**，不拷贝 | 实测 **8 个上游全部存活** ⇒ 可再生。`assets/MIRROR-MANIFEST.md` + `mirror-restore.sh` |
+| `/params` 产线标定 | 已入库（含 SHA256SUMS） | 2021 产线台产物，不可再生 |
+| `cyberdog_ros2` | 上游可再生（实测 200） | — |
+| **运动板快照** | `assets/mb-snapshot-2026-07-30/` | **与运动控制工作直接相关的事前存档** |
+
+`assets/RECOVERY.md` 是恢复路径总表 + 检查清单 + 5 个实战踩过的救援陷阱。
+其中一行必须单独强调：🔴 **运动板固件无恢复手段**（Dreame 加密的 envelopedData），
+所以规矩是「先存档再接触、只读侦察也要机主同意、绝不刷固件、绝不 kill 工厂控制器」。
+
+**🔴 过程中的真实事故**：`git add -f assets/` 把小米云 OAuth token 强制加进了暂存区
+——**`-f` 会覆盖 `.gitignore`**。当场发现撤掉，确认未进任何历史提交。
+随即加 `.githooks/pre-commit` 自动闸门（路径黑名单 + 内容特征双检），双向自测通过。
+坑中坑：钩子自身必须白名单，否则它会因为包含检测模式而拦住自己。
+
+### 第二步：运动安全层
+
+**闸门位置精确锁定**（从小米开源的 `default_param.yaml` 实读）：
+
+| 参数 | 值 | 含义 |
+|---|---|---|
+| **`port_send_to_motion`** | **7671** (TTL 2) | 🔴 上位机→运动板指令口，**闸门守的就是这里** |
+| `port_recv_from_motion` | 7670 (TTL 1) | 只读，不经闸门 |
+| `timeout_motion_ms` | 333 | 出厂自带运动超时（我们的看门狗 200ms 更严）|
+| `rate_control_hz` | 30 | 上位机指令速率（Python 完全够）|
+
+指令消息 = `motion_control_request_lcmt`，**122 + 8 fingerprint = 130 字节**
+（与可行性报告独立算出的值一致）。而运动板在 7667 上播的 `motion_control_cmd`
+是 `motion_control_command_lcmt` = 44+8 = **52 字节** ✅ 与实测吻合。
+
+**`dog-scripts/motion/motion_safety.py` 的设计原则是失效即安全**：
+
+1. 默认 `dry_run=True` + `armed=False` —— **开箱即用是打不出去的**
+2. dry-run 下**根本不创建 socket**（纵深防御：逻辑写错也发不出去）
+3. 解除保险要**三个条件同时成立**：非 dry-run + `owner_present=True`（🔴 项目红线）
+   + 显式 `arm(token="I-AM-PRESENT")`（刻意做成要手打，防手滑）
+4. 急停**锁存**，必须人工 `clear_estop()`；急停文件 `/run/cyberdog-motion-estop`
+   任何进程都能 touch
+5. 看门狗 200ms 无新指令 → 自动 disarm
+6. 非法指令（缺字段/NaN/Inf）→ 拒发**并且** disarm
+7. 限幅：线 0.5m/s、角 0.5rad/s、机身高 0.32m（远严于硬件的 24N·m / 45rad/s）
+
+**测试套件 34 项全绿**（本地 + 狗上真实环境各跑一遍），每条防线都有一个
+会失败的测试证明它在工作：`dog-scripts/motion/test_motion_safety.py`，
+不需要狗/网络/电池。
+
+⚠️ **已知未完成项**：`LCM_FINGERPRINT` 目前是占位 8 字节 0。
+真正 arm 之前**必须先从出厂流量里抓到 `motion_control_request_lcmt` 的真 fingerprint**，
+否则运动板会丢弃。dry-run 下不受影响（本来就不发）。
