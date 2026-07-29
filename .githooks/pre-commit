@@ -26,5 +26,17 @@ for f in $(git diff --cached --name-only --diff-filter=ACM); do
   fi
 done
 
+# ③ 只读性断言：运动桥永远不能长出发送路径
+#    用 AST 而非 grep —— 注释里写 "不调用 sendto" 会让 grep 永久误报,
+#    那样这条断言就会变成"每次命中然后被人工解释掉"= 等于没有。
+BR=dog-scripts/motion/motion_bridge_node.py
+if git diff --cached --name-only | grep -q "^$BR$"; then
+  if ! python3 dog-scripts/motion/assert_readonly.py "$BR" >/dev/null 2>&1; then
+    echo "❌ 提交被拦截：$BR 长出了发送路径或写侧依赖"
+    python3 dog-scripts/motion/assert_readonly.py "$BR" | sed 's/^/   /'
+    bad=1
+  fi
+fi
+
 [ "$bad" = "0" ] || { echo "   如确认是误报：git commit --no-verify"; exit 1; }
 exit 0
