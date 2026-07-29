@@ -2762,3 +2762,71 @@ AE 验收矩阵：三路并发 15s×3 轮（轮间全关重开）全部 29fps；
 ⇒ **出厂 AI 跟踪要活起来，缺的不是图像话题，是 bbox 生产者**（出厂由
 camera_server 内嵌的 vision_ai_sdk 做，绑死 argus）。可行路线（未做，属新工程）：
 自建检测节点订阅 `/mi1045904/ai_camera/image_raw` 跑人体检测发 bbox 喂 tracking。
+
+---
+
+## 🏆 JP5 视觉 AI 地基验证通过（2026-07-29，机主拍板 JP5 为主线之后）
+
+机主拍板：**JP5 为主线（JP4 太老），目的是自己在 JP5 上开发功能，不做社区发布。**
+这让可行性报告里那条「决定整个视觉域生死」的未验证假设从待办升级成地基 —— 当场验了。
+
+### ① TensorRT 在 JP5 上是活的（5 个出厂引擎全部 PASSED）
+
+`trtexec --loadEngine`，带 `LD_PRELOAD=/opt/nvgpu-r32-shim.so`，**三路相机保持满速**：
+
+| 引擎 | 大小 | GPU 中位延迟 | 吞吐 |
+|---|---|---|---|
+| `body/detect-batchsize1` 人体检测 | 40.6 MB | 16.0 ms | ~50 qps |
+| `body/cls_human_mid` 人体分类 | 78.3 MB | 3.16 ms | 215 qps |
+| `body/reid_v1_mid` ReID | 55.3 MB | 3.94 ms | 213 qps |
+| `face/detect/mnetv2…` 人脸检测 | 2.7 MB | 4.35 ms | 185 qps |
+| `face/feature/airfacenet…` 人脸特征 | 17.4 MB | 5.51 ms | 143 qps |
+
+⇒ **可行性报告里「视觉域要 2.5~3 人月拿 YOLO 重写」的结论作废。** 出厂模型能跑。
+（报告的谨慎是对的 —— 它明确把这条标为「未验证/中」并把这条实验列为第一优先，
+ 结论方向错了但方法论是对的。）
+
+### ② 出厂视觉 SDK 可以从自己的代码直接调用
+
+**头文件就在狗上且是 Apache-2.0**：`/opt/ros2/cyberdog/include/athena_vision/`
+（`algorithm.h` / `body_detect_api.h` / `face_detect_api.h` / `reid_api.h`）。
+
+API 面只有三个函数：
+
+```c
+AlgoHandle body_detect_init();
+bool       body_detect(AlgoHandle, BufferInfo*, std::vector<SingleBodyInfo>&);
+void       body_detect_destroy(AlgoHandle);
+
+typedef struct { void* data; uint32_t width, height; Format format; } BufferInfo;  // FORMAT_RGB
+typedef struct { std::string id; Rect rect; std::vector<float> feats; float score; } SingleBodyInfo;
+```
+
+🔑 **`BufferInfo.format = FORMAT_RGB` 正好是我们相机桥直出的 rgb8** —— 零转换直接喂。
+而且**一次调用同时拿到检测框 + ReID 特征向量**。
+
+实测（`dog-scripts/src/body-detect-probe.cpp`，真实相机帧 1280×960）：
+
+```
+✅ handle=0xaaaad22e39b0  init 耗时 17094 ms（加载两个 TRT 引擎）
+③ 第 1~5 次 body_detect() → true, 0 个目标
+④ 稳态延迟 55.7 ms（首次 123.1 ms）→ 上限 18.0 fps
+```
+
+0 个目标是暗房无人的正常结果；**调用链本身 5/5 成功**。
+⚠️ 「能检出人」这一条**仍未验证** —— 需要机主站到镜头前跑一次（十秒的事）。
+
+### ③ 两个工程坑
+
+- **模型路径是绝对的**（`/opt/ros2/cyberdog/lib/vision_ai_sdk/model`），不依赖 CWD。
+  日志里 `<WARN> model is not exists in: …cls_human_mid.onnx` 是正常的 ——
+  它先找 onnx 找不到，再回落到 `.engine`。
+- 🔴 **`-Wl,--disable-new-dtags` 是必须的**：默认 RUNPATH **不作用于传递依赖**，
+  而 `libContentMotionAPI.so` 自己还要 `libresizeconvertion.so`。
+  即便如此，运行时仍要显式给 `LD_LIBRARY_PATH`。
+
+### ④ 性能缺口（已知优化目标）
+
+裸引擎 16.0+3.16 = 19 ms，SDK 封装后 55.7 ms —— **多出的 ~37 ms 是 CPU 侧预处理**
+（resize/格式转换）。要提速就把预处理搬到 GPU，或直接绕开 SDK 自己调引擎。
+18 fps 对人体跟随已经够用。
