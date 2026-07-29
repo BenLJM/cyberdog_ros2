@@ -35,3 +35,8 @@ build/nvcsi-variants/C-gated/Image
 build/nvcsi-variants/G-stage2/Image
 build/nvcsi-variants/H-stage3/Image
 build/nvcsi-variants/J-stage5/Image
+
+# ── 凭证:绝不入库 ────────────────────────────────────────────────────────
+# /params/audio/token.toml 里的小米云 OAuth token(access/refresh/deviceid)。
+# 备份保留在本地供逆向分析,但公开仓库里只留脱敏说明(token.toml.REDACTED)。
+assets/params-backup-SECRETS/

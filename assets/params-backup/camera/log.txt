@@ -1,0 +1,82 @@
+current time : Sun Jan 28 23:59:56 2018
+
+function : calib ai and color canmera 
+LOG_INFO : === init params ===
+LOG_INFO : chess_num : 3
+LOG_INFO : square_size : 0.03
+LOG_INFO : threshold : 1.4
+LOG_INFO : camera_model : mei
+LOG_INFO : board_size : [7 x 11]
+LOG_INFO : camera_init : sensor_id : 0
+LOG_INFO : three camera finish calib !
+
+LOG_INFO : Function : getAIandColorCorners
+LOG_INFO : left chessboard size : [7 x 11]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : === STEP3: chessboard matching === 
+LOG_INFO : matching result : [0, 1, 2;
+ 1, 1, 1]
+LOG_INFO : current time : Mon Jan 29 00:00:44 2018
+
+LOG_INFO : function : three camera calib 
+LOG_INFO : === init params ===
+LOG_INFO : chess_num : 5
+LOG_INFO : square_size : 0.03
+LOG_INFO : threshold : 0.2
+LOG_INFO : camera_model : mei
+LOG_INFO : img_size : [640 x 480]
+LOG_INFO : board_size : [7 x 11]
+LOG_INFO : finish three calib 
+LOG_INFO: Function : getChessboardCorners 
+LOG_INFO : left chessboard size : [7 x 11]
+LOG_INFO : right chessboard size : [7 x 11]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [7 x 11]
+LOG_INFO : left chessboard size : [7 x 11]
+LOG_INFO : right chessboard size : [7 x 11]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : === STEP3: chessboard matching === 
+LOG_INFO : matching result : [0, 1, 2, 3, 4;
+ 1, 1, 1, 1, 1]
+LOG_INFO: Function : getChessboardCorners 
+LOG_INFO : left chessboard size : [7 x 11]
+LOG_INFO : right chessboard size : [7 x 11]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : left chessboard size : [7 x 11]
+LOG_INFO : right chessboard size : [7 x 11]
+LOG_INFO : left chessboard size : [11 x 7]
+LOG_INFO : right chessboard size : [11 x 7]
+LOG_INFO : === STEP3: chessboard matching === 
+LOG_INFO : matching result : [0, 1, 2, 3, 4;
+ 1, 1, 1, 1, 1]
+LOG_OUT << current time : Fri Aug 27 19:17:44 2021
+
+LOG_OUT << function : camera calib params check 
+LOG_INFO : function : check imu calib result !
+LOG_INFO : md size : 24
+LOG_INFO : data size : 524
+LOG_INFO : rs_imu Correct buffer : 7 217 7
+LOG_INFO : open /params/camera/camera_left.yaml file success
+LOG_INFO : open /params/camera/camera_right.yaml file success
+LOG_INFO : open /params/camera/camera_AI.yaml file success
+LOG_INFO : open /params/camera/extrinsics_stereo.yaml file success
+LOG_INFO : open /params/camera/extrinsics_ColorAI.yaml file success
+LOG_INFO : open /params/camera/extrinsics_LeftAI.yaml file success
+LOG_INFO : Check_result: 0(not calib), 1(calib)
+LOG_INFO : flag_th_intrin : 1
+LOG_INFO : flag_th_extrin : 1
+LOG_INFO : flag_rs_intrin : 1
+LOG_INFO : flag_rs_extrin : 1
+LOG_INFO : flag_rs_imu    : 1
+LOG_INFO : finish params check 
+

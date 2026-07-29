@@ -1,0 +1,8 @@
+# 原文件含小米云 OAuth 凭证(token_access / token_fresh / token_deviceid)
+# 已移出到 assets/params-backup-SECRETS/(该目录被 .gitignore 排除,绝不入库)
+# 结构如下(值已抹去),供逆向参考:
+#   token_deviceid = "<32 字符设备ID>"
+#   token_expireIn = "2592000"
+#   token_fresh    = "R3_txb…<217 字符 refresh token>"
+#   token_access   = "V3_P_8…<195 字符 access token>"
+#   title          = "offline_xiaoai_token"
