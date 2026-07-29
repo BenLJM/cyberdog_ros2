@@ -41,6 +41,8 @@ fi
 # --- 前置存在性检查(缺件直接 78) ----------------------------------------------
 [ -x "$CHROOT$INNER" ] || { log "FATAL missing $CHROOT$INNER"; exit 78; }
 [ -f "$CHROOT$NODE" ]  || { log "FATAL missing $CHROOT$NODE";  exit 78; }
+# C++ 二进制是可选的 —— 没有就自动回落 Python 版(inner 脚本里判断)
+[ -x "$CHROOT/opt/ai-camera/ai-camera-node" ] || log "没有 C++ 二进制, 将回落 Python 版(跑 ai-camera-build.sh 可编出来)"
 # ⚠️ 门控不存在 = 当前内核没带 r32 相机补丁(比如 DEFAULT 的 good 内核)。
 # 这不是故障, 是"这个内核上没这功能" —— 干净 exit 0 让 unit 落在 inactive,
 # 而不是 78 留一个永久 failed 单元去污染健康检查。
@@ -108,18 +110,22 @@ else
   log "WARN 宿主没有 v4l2-ctl, 跳过控件设置"
 fi
 
-BIN="${AI_CAM_BIN:-2}"
-FPS="${AI_CAM_FPS:-5}"
+BIN="${AI_CAM_BIN:-4}"
+W="${AI_CAM_W:-1280}"
+H="${AI_CAM_H:-960}"
+FPS="${AI_CAM_FPS:-30}"
+IMPL="${AI_CAM_IMPL:-auto}"
 NS="${AI_CAM_NS:-/mi1045904}"
 GAIN="${AI_CAM_GAIN:-1.0}"
 AUTOLEVEL="${AI_CAM_AUTOLEVEL:-1}"
 
-log "starting node: dev=$DEV bin=$BIN fps=$FPS ns=$NS autolevel=$AUTOLEVEL"
+log "starting node: dev=$DEV impl=$IMPL ${W}x${H}(py 用 bin=$BIN) fps=$FPS ns=$NS autolevel=$AUTOLEVEL"
 
 # --- 进 chroot ----------------------------------------------------------------
 # 以 root 跑(不走 `su - mi`): 一是 /dev/video1 是 root:video 660,
 # 二是 `chroot … su - mi -c` 没有 tty 会吞掉 stdout(0727 踩过), 日志会消失。
 # DDS 侧实测 root 能和出厂栈互相发现(ros2 node list 能看到全部 35 个节点)。
 exec /usr/sbin/chroot "$CHROOT" /bin/bash -c \
-  "AI_CAM_DEV='$DEV' AI_CAM_BIN='$BIN' AI_CAM_FPS='$FPS' AI_CAM_NS='$NS' \
+  "AI_CAM_DEV='$DEV' AI_CAM_IMPL='$IMPL' AI_CAM_W='$W' AI_CAM_H='$H' \
+   AI_CAM_BIN='$BIN' AI_CAM_FPS='$FPS' AI_CAM_NS='$NS' \
    AI_CAM_GAIN='$GAIN' AI_CAM_AUTOLEVEL='$AUTOLEVEL' $INNER"

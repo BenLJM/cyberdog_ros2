@@ -33,16 +33,35 @@ export HOME=/root
 export PYTHONUNBUFFERED=1
 export LD_LIBRARY_PATH="/opt/ros2/foxy/lib:/opt/ros2/cyberdog/lib:/usr/local/lib:${LD_LIBRARY_PATH:-}"
 
-BIN="${AI_CAM_BIN:-2}"
-FPS="${AI_CAM_FPS:-5}"
-# 一帧 rgb8 的字节数(降采样后), 用来对 rmem_max 做能力自检
-W=$(( 4208 / (2 * BIN) )); H=$(( 3120 / (2 * BIN) ))
-NEED=$(( W * H * 3 ))
-RMEM=$(cat /proc/sys/net/core/rmem_max 2>/dev/null || echo 0)
-echo "[ai-cam-inner] 输出 ${W}x${H} rgb8 = ${NEED}B/帧 @ ${FPS}fps ; rmem_max=${RMEM}B"
-if [ "$NEED" -gt "$RMEM" ]; then
-  echo "[ai-cam-inner] WARN 单帧 ${NEED}B > rmem_max ${RMEM}B —— 影像会几乎投递不出去。"
-  echo "[ai-cam-inner] WARN 装 /etc/sysctl.d/99-cyberdog.conf 再 sysctl --system, 或调大 AI_CAM_BIN。"
+# 实现选择: 有 C++ 二进制就用它(能到出厂的 1280x960@30fps),
+# 否则回落到 Python 版(rclpy publish ~30MB/s 的墙, 只能到 526x390@30fps)。
+# 用 AI_CAM_IMPL=py 可以强制走 Python 版。
+CPPBIN=/opt/ai-camera/ai-camera-node
+IMPL="${AI_CAM_IMPL:-auto}"
+if [ "$IMPL" = "py" ] || { [ "$IMPL" = "auto" ] && [ ! -x "$CPPBIN" ]; }; then
+  IMPL=py
+else
+  IMPL=cpp
 fi
 
+FPS="${AI_CAM_FPS:-30}"
+if [ "$IMPL" = "cpp" ]; then
+  W="${AI_CAM_W:-1280}"; H="${AI_CAM_H:-960}"
+else
+  BIN="${AI_CAM_BIN:-4}"
+  W=$(( 4208 / (2 * BIN) )); H=$(( 3120 / (2 * BIN) ))
+fi
+# 一帧 rgb8 的字节数(降采样后), 用来对 rmem_max 做能力自检
+NEED=$(( W * H * 3 ))
+RMEM=$(cat /proc/sys/net/core/rmem_max 2>/dev/null || echo 0)
+echo "[ai-cam-inner] impl=${IMPL} 输出 ${W}x${H} rgb8 = ${NEED}B/帧 @ ${FPS}fps ; rmem_max=${RMEM}B"
+if [ "$NEED" -gt "$RMEM" ]; then
+  echo "[ai-cam-inner] WARN 单帧 ${NEED}B > rmem_max ${RMEM}B —— 影像会几乎投递不出去。"
+  echo "[ai-cam-inner] WARN 装 /etc/sysctl.d/99-cyberdog.conf 再 sysctl --system, 或调小分辨率。"
+fi
+
+if [ "$IMPL" = "cpp" ]; then
+  export AI_CAM_W="$W" AI_CAM_H="$H"
+  exec "$CPPBIN"
+fi
 exec python3 /opt/ai-camera/ai-camera-node.py

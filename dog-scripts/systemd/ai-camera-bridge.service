@@ -23,14 +23,17 @@ Type=simple
 ExecStartPre=/usr/local/bin/jp5-chroot-prep.sh
 ExecStart=/usr/local/bin/ai-camera-bridge.sh
 
-# ── 带宽档位 ──────────────────────────────────────────────────────────────
+# ── 输出档位 ──────────────────────────────────────────────────────────────
 # 源是 4208x3120 RAW10 @30fps = 787 MB/s, 不可能整帧发。
-#   AI_CAM_BIN=2 → 输出 1052x780 rgb8 = 2.46 MB/帧
-#   AI_CAM_FPS=5 → 每 6 帧发一次 ≈ 12 MB/s
-# 要更省就调大 BIN(4 → 526x390 = 615KB/帧)或调小 FPS。
-# ⚠️ 每帧都会 DQBUF/QBUF(必须, 否则驱动的四个缓冲会耗尽), 只是不处理不发。
-Environment=AI_CAM_BIN=2
-Environment=AI_CAM_FPS=5
+# 默认对齐**出厂规格** 1280x960 @30fps —— 出厂标定 camera_AI.yaml 就是这个
+# 分辨率。实测 C++ 节点每帧 转换 18.0ms + 发布 1.0ms, 只占 33ms 预算的一半多。
+# ⚠️ 每帧都会 DQBUF/QBUF(必须, 否则驱动缓冲会耗尽), 只是不处理不发。
+#
+# AI_CAM_IMPL=py 可强制回落 Python 版(rclpy publish ~30MB/s 的墙, 只能
+# 526x390@30fps; 那时用 AI_CAM_BIN 而不是 W/H)。
+Environment=AI_CAM_W=1280
+Environment=AI_CAM_H=960
+Environment=AI_CAM_FPS=30
 Environment=AI_CAM_NS=/mi1045904
 
 # 自动电平: 按每帧 99.5 分位拉伸到 8 位。关掉的话用固定线性映射 + AI_CAM_GAIN。
