@@ -1,0 +1,26 @@
+# 采集时刻(宿主单调时间): 42538.62s since boot
+## 宿主网桥
+6: l4tbr0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    inet 192.168.55.1/24 scope global l4tbr0
+       valid_lft forever preferred_lft forever
+default via 192.168.55.100 dev l4tbr0 metric 32766 
+192.168.55.0/24 dev l4tbr0 proto kernel scope link src 192.168.55.1 
+## 运动板可达性
+### 192.168.55.233
+--- 192.168.55.233 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2046ms
+rtt min/avg/max/mdev = 0.462/0.478/0.492/0.012 ms
+  tcp/22 OPEN
+  tcp/8080 closed
+  tcp/10206 closed
+Address                  HWtype  HWaddress           Flags Mask            Iface
+192.168.55.233           ether   36:c9:e3:f1:b8:05   C                     l4tbr0
+### 192.168.55.100
+--- 192.168.55.100 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2022ms
+rtt min/avg/max/mdev = 0.370/0.424/0.498/0.054 ms
+  tcp/22 OPEN
+  tcp/8080 closed
+  tcp/10206 closed
+Address                  HWtype  HWaddress           Flags Mask            Iface
+192.168.55.100           ether   36:c9:e3:f1:b8:05   C                     l4tbr0

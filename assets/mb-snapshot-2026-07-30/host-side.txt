@@ -1,0 +1,25 @@
+## 宿主上跟 LCM/运动相关的进程
+## chroot 里的 LCM 类型定义(md5,用于确认版本)
+b30d24474d5cde6d4d27de800b23f16e  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/bms_lcmt.lcm
+79facc8086f1bc86d4a1387301526d2e  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/cheetah_visualization_lcmt.lcm
+2f8793c8ae345b8fc3c9cde26113f919  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/control_parameter_lcmt.lcm
+f0738da9886e2a06d4fd6a493f1ea159  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/gamepad_lcmt.lcm
+02524f108808e8212e3f11477fc00675  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/heightmap_t.lcm
+125504203a67d9cbc88c000bed43035d  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/leg_control_command_lcmt.lcm
+b45b5d413eb523c7675d1f198f08470b  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/leg_control_data_lcmt.lcm
+df1191ead62d8fa0386de81166f95f54  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/localization_lcmt.lcm
+b44dd13f8c67247f8dade66417cf48a3  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/microstrain_lcmt.lcm
+0d32b2a37577de768e1ddd50e0ccd88c  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/motion_control_lcmt.lcm
+beec4b4c99d9a0c6d4f9510b7e22d673  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/obstacle_visual_t.lcm
+c729310207b612e8c39e5b361d8b83b3  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/qp_controller_data_t.lcm
+efb7ad45d430d6135933911a259affc7  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/sim_command_t.lcm
+acb4e1b559cfe92c1b4c1e75ff3bb574  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/simulator_lcmt.lcm
+1c2fdd3d4ea16d757d57552cc3c866a9  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/spi_command_t.lcm
+462373a16d5257358e86d86ca4e595c0  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/spi_data_t.lcm
+e34a54c66ca22feefd13cd92d2f6c510  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/state_estimator_lcmt.lcm
+ebc9912818f1954efe90e65e2a7fea15  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/trajectory_command_lcmt.lcm
+6736371a6e3f4cb62819c7ef27ca13ca  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/traversability_map_t.lcm
+2d311cdd18b1d710f4eb407c8a223842  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/two_contact_stand_data_t.lcm
+a96e017e40a94da0fb4d8ac077adb7c2  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/velocity_visual_t.lcm
+02b65fd3cdca4e6456d89ca569c19c1e  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/vision_data_t.lcm
+98d52b983aa46399113a4696d0de9c27  /mnt/jp4/home/mi/cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/wbc_test_data_t.lcm

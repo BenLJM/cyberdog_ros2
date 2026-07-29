@@ -1,0 +1,12 @@
+# 被动监听 10.0 秒 —— 本进程从未 sendto
+## 发包方
+  192.168.55.233    40699 包 4069.9/s
+## 频道(名称 频率Hz 载荷字节)
+  myIMU                               1009.99     80
+  global_to_robot                      500.00     56
+  leg_control_command                  500.00    488
+  motion_control_cmd                   500.00     52
+  leg_control_data                     500.00    392
+  spi_data                             500.00    204
+  spi_command                          500.00    264
+  main_cheetah_visualization            59.90    100

@@ -1,0 +1,30 @@
+#!/bin/bash
+# 凭证闸门：阻止小米云 token 等机密进入提交。
+# 由来：2026-07-30 一次 `git add -f assets/` 把 params-backup-SECRETS/token.toml
+# 强制加进了暂存区（-f 会覆盖 .gitignore）。当场发现并撤掉，但必须自动化防呆。
+set -u
+bad=0
+
+# ① 路径黑名单
+if git diff --cached --name-only | grep -qE "params-backup-SECRETS|/token\.toml$|\.pem$|id_rsa$"; then
+  echo "❌ 提交被拦截：暂存区含机密路径"
+  git diff --cached --name-only | grep -E "params-backup-SECRETS|/token\.toml$|\.pem$|id_rsa$" | sed 's/^/   /'
+  bad=1
+fi
+
+# ② 内容特征（小米云 token 的实测前缀 + 通用密钥特征）
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+  [ -f "$f" ] || continue
+  # 二进制跳过；钩子自身跳过（它必须包含这些检测模式，否则自己拦自己）
+  case "$f" in
+    *.bin|*.engine|*.img) continue ;;
+    .githooks/pre-commit) continue ;;
+  esac
+  if grep -qE 'token_access|token_fresh|"V3_P_|"R3_txb|BEGIN (RSA|OPENSSH) PRIVATE KEY' "$f" 2>/dev/null; then
+    echo "❌ 提交被拦截：$f 含疑似凭证"
+    bad=1
+  fi
+done
+
+[ "$bad" = "0" ] || { echo "   如确认是误报：git commit --no-verify"; exit 1; }
+exit 0

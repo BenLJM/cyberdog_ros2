@@ -20,7 +20,8 @@ build/recovered-from-dog/unpack-rescue/
 
 # ---- 大二进制:出厂 QSPI 全片备份(32M,不可再生但不适合入库) ----
 # 保留在工作树,单独异地备份
-build/qspi-backup-factory.bin
+# build/qspi-backup-factory.bin —— 32MB,这台狗**不可再生**的 QSPI 内容,
+# 是砖机时唯一的恢复源。已改为**入库**(见 assets/RECOVERY.md)。
 build/firmware/
 
 # ---- 杂项 ----
