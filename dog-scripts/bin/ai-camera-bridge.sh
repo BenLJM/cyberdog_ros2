@@ -98,6 +98,17 @@ case "$NAME" in
     ;;
 esac
 
+# --- 枚举鱼眼(ov7251 ×2, 变体 AE 起内核支持三路并发) --------------------------
+FE1=""; FE2=""
+for v in /dev/video*; do
+  n=$(cat "/sys/class/video4linux/$(basename "$v")/name" 2>/dev/null || echo '')
+  case "$n" in
+    *"ov7251 2-0061"*) FE1="$v" ;;
+    *"ov7251 2-0062"*) FE2="$v" ;;
+  esac
+done
+log "fisheye_a(2-0061)=$FE1 fisheye_b(2-0062)=$FE2 (空=不起该路)"
+
 # --- v4l2 控件: bypass_mode=0(走 VI 而不是旁路给 ISP), 增益 --------------------
 # 节点自己不设控件(纯 ctypes 少一块可能出错的代码), 这里用宿主的 v4l2-ctl 设好。
 if command -v v4l2-ctl >/dev/null 2>&1; then
@@ -128,4 +139,5 @@ log "starting node: dev=$DEV impl=$IMPL ${W}x${H}(py 用 bin=$BIN) fps=$FPS ns=$
 exec /usr/sbin/chroot "$CHROOT" /bin/bash -c \
   "AI_CAM_DEV='$DEV' AI_CAM_IMPL='$IMPL' AI_CAM_W='$W' AI_CAM_H='$H' \
    AI_CAM_BIN='$BIN' AI_CAM_FPS='$FPS' AI_CAM_NS='$NS' \
+   AI_CAM_DEV_FE1='$FE1' AI_CAM_DEV_FE2='$FE2' \
    AI_CAM_GAIN='$GAIN' AI_CAM_AUTOLEVEL='$AUTOLEVEL' $INNER"

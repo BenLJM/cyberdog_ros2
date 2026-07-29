@@ -2663,3 +2663,63 @@ numpy 代码，**猜错了**（numpy 的整块/规则跨步读走的是优化过
 | Python | 526×390 | 30.1 fps |
 | Python | 701×520 | 19.1 fps |
 | Python | 1052×780 | 9.3 fps |
+
+---
+
+## 🏆 全镜头打通 + 变体 AE 转正（2026-07-29 深夜）
+
+**机主拍板转正后的两连跳：AC 转正 → 全镜头攻坚 → AE 转正。**
+现在 `DEFAULT jp5` 直接引导 AE（`#44`，Image `d2abc750a65f85ed`），开机全自动：
+
+| 话题 | 规格 | 实测 |
+|---|---|---|
+| `/mi1045904/ai_camera/image_raw` | 1280×960 rgb8 | **29.6 fps** |
+| `/mi1045904/ai_camera/fisheye_a/image_raw`（ov7251 2-0061）| 640×480 mono8 | **29.7 fps** |
+| `/mi1045904/ai_camera/fisheye_b/image_raw`（ov7251 2-0062）| 640×480 mono8 | **29.7 fps** |
+
+独立订阅者 15 秒各收 444/446/445 帧；0 failed / 8 服务 / 38 ROS 节点 / 六热区正常。
+回退链：`Image.prev-ae`(=AC) → `Image.prev-ac`(=good `#9`)。extlinux.conf 全程未动一字节。
+
+### 「rebind 后只有第一路能出帧」的真身（本轮最大发现）
+
+四个判决实验收敛出机制：**每次 `vi_capture_setup` 都重跑 `start_streams`**
+（重校准 + 对全部三端口重发 SET_CONFIG/OPEN）。MIPI 校准要求 lane 处于 LP 态 ——
+对着在流的 lane 重校准就是打断；对已 OPEN 的流重复 OPEN 把固件流状态机搞乱。
+这也正是此前「同一次开机内不能反复做实验」「~50% 轮次无效」的真正原因 ——
+那不是玄学，是我们自己的补丁在自伤。
+
+| 实验（AC 上）| 结果 |
+|---|---|
+| rebind → 单路 | ✅（唯一可靠模式）|
+| 一路在流 + 第二路 STREAMON | ❌ 两路全坏 |
+| 一路流完 → 第二路 | ❌ 零帧（mask 都拿到了）|
+| 三路同时 | ❌ 全零 + `mask=0x0` 坏通道 + 24 次超时 |
+
+### 修法：stage24（once）+ stage25（端口位图）
+
+- **stage24**：`start_streams` 加 once+mutex（RCE 每次 resume 只完整跑一遍，并发在锁上等）；
+  门控下抑制 `PHY_STREAM_CLOSE`（keepalive，流开到 RCE 重启为止）；
+  once 标志挂在 rtcpu `runtime_resume`（=RCE 固件重启、流状态清零）时重置。
+- **stage25**：AD 实测三路并发仍有竞态（主摄+鱼眼A 满速、**鱼眼B 0 帧零错误**，
+  port0/1 同一 CIL brick）—— per-channel 入口（`csi5_start_streaming`）仍在重发。
+  改为**两张原子位图**（cfg/open 各一），每端口每种消息在 RCE 一个生命周期内
+  全局只发一次，`atomic_fetch_or` 竞态安全，随 stage24 的 reset 一起清零。
+
+AE 验收矩阵：三路并发 15s×3 轮（轮间全关重开）全部 29fps；中途加入互不影响；零错误。
+
+### 桥的三镜头编排
+
+- C++ 节点新增 `AI_CAM_ENCODING=mono8`（鱼眼 OV7251 是单色传感器，驱动报的
+  BG10 Bayer 标签是形式上的 —— 逐像素 LUT 直出灰度）、`AI_CAM_NODE_NAME`、
+  `AI_CAM_TOPIC_PREFIX`。
+- `ai-camera-bridge.sh` 按 sysfs 名字枚举两颗 ov7251（rebind 后 video 编号会漂移，
+  不能写死）。
+- `ai-camera-inner.sh` 三进程编排：任何一个退出整组退出（`wait -n` +
+  `KillMode=control-group` 收尸），交给 systemd 重启 —— rebind 让内核状态干净重来。
+
+### 测量的坑（差点又误判）
+
+- **tmpfs 写满伪装成"主摄被鱼眼打断"**：26MB/帧 ×157 帧 ≈ 4GB = tmpfs 上限，
+  写满后 v4l2-ctl 停止收帧、零内核错误。测帧率一律 `--stream-to=/dev/null`。
+- 计帧管道 `tr -d "<" | wc -c` 数的是**剩下**的字节 —— 正确姿势
+  `--verbose 2>&1 | grep -c dqbuf`。

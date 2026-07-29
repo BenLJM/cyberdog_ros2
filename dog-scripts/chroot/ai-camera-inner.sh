@@ -62,6 +62,29 @@ fi
 
 if [ "$IMPL" = "cpp" ]; then
   export AI_CAM_W="$W" AI_CAM_H="$H"
-  exec "$CPPBIN"
+  # ── 三镜头编排(2026-07-29 变体 AE 起) ────────────────────────────────────
+  # 内核已修好端口幂等(r32-once + r32-perport), 三路可并发满速。
+  # 鱼眼设备路径由宿主启动器解析后经 AI_CAM_DEV_FE1/FE2 传入; 缺省不起鱼眼。
+  # 三个进程一损俱损: 任何一个退出就整组退出(KillMode=control-group 收尸),
+  # 交给 systemd 重启 —— 桥的 rebind 会让内核状态干净重来。
+  PIDS=""
+  if [ -n "${AI_CAM_DEV_FE1:-}" ]; then
+    AI_CAM_DEV="$AI_CAM_DEV_FE1" AI_CAM_ENCODING=mono8 AI_CAM_W=640 AI_CAM_H=480       AI_CAM_NODE_NAME=ai_camera_fisheye_a AI_CAM_TOPIC_PREFIX=/ai_camera/fisheye_a       AI_CAM_FRAME_ID=ai_camera_fisheye_a "$CPPBIN" &
+    PIDS="$PIDS $!"
+  fi
+  if [ -n "${AI_CAM_DEV_FE2:-}" ]; then
+    AI_CAM_DEV="$AI_CAM_DEV_FE2" AI_CAM_ENCODING=mono8 AI_CAM_W=640 AI_CAM_H=480       AI_CAM_NODE_NAME=ai_camera_fisheye_b AI_CAM_TOPIC_PREFIX=/ai_camera/fisheye_b       AI_CAM_FRAME_ID=ai_camera_fisheye_b "$CPPBIN" &
+    PIDS="$PIDS $!"
+  fi
+  if [ -z "$PIDS" ]; then
+    exec "$CPPBIN"          # 没有鱼眼: 保持单进程 exec 语义
+  fi
+  "$CPPBIN" &               # 主摄
+  PIDS="$PIDS $!"
+  # wait -n: 任何一个先退就带崩整组(bash 4.4 有)
+  wait -n $PIDS
+  echo "[ai-cam-inner] 某个相机进程退出, 整组退出交给 systemd 重启"
+  kill $PIDS 2>/dev/null
+  exit 1
 fi
 exec python3 /opt/ai-camera/ai-camera-node.py

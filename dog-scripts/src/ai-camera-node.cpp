@@ -180,12 +180,15 @@ private:
 
 class AiCameraNode : public rclcpp::Node {
 public:
-  AiCameraNode() : Node("ai_camera_bridge") {}
+  AiCameraNode() : Node(EnvStr("AI_CAM_NODE_NAME", "ai_camera_bridge")) {}
 
   bool Init() {
     dev_ = EnvStr("AI_CAM_DEV", "/dev/video1");
-    out_w_ = EnvInt("AI_CAM_W", 1280);
-    out_h_ = EnvInt("AI_CAM_H", 960);
+    // mono8: 鱼眼 OV7251 是单色传感器(驱动报的 BG10 Bayer 标签是形式上的,
+    // 所有像素同为灰度) —— 逐像素 LUT 直出灰度, 不做 Bayer 抽点。
+    mono_ = (EnvStr("AI_CAM_ENCODING", "rgb8") == "mono8");
+    out_w_ = EnvInt("AI_CAM_W", mono_ ? 640 : 1280);
+    out_h_ = EnvInt("AI_CAM_H", mono_ ? 480 : 960);
     fps_ = EnvDbl("AI_CAM_FPS", 30.0);
     gain_ = EnvDbl("AI_CAM_GAIN", 1.0);
     autolevel_ = EnvInt("AI_CAM_AUTOLEVEL", 1) != 0;
@@ -198,28 +201,31 @@ public:
       RCLCPP_ERROR(get_logger(), "打开 %s 失败: %s", dev_.c_str(), err.c_str());
       return false;
     }
-    if (cap_.fourcc() != v4l2_fourcc('R', 'G', '1', '0')) {
-      RCLCPP_WARN(get_logger(), "意外的像素格式 0x%08x（预期 RG10），解码可能不对",
-                  cap_.fourcc());
+    const uint32_t want = mono_ ? v4l2_fourcc('B', 'G', '1', '0')
+                                : v4l2_fourcc('R', 'G', '1', '0');
+    if (cap_.fourcc() != want) {
+      RCLCPP_WARN(get_logger(), "意外的像素格式 0x%08x（预期 %s），解码可能不对",
+                  cap_.fourcc(), mono_ ? "BG10" : "RG10");
     }
-    if (out_w_ < 2 || out_h_ < 2 ||
-        out_w_ > static_cast<int>(cap_.width() / 2) ||
-        out_h_ > static_cast<int>(cap_.height() / 2)) {
-      RCLCPP_ERROR(get_logger(), "输出 %dx%d 越界（源 Bayer 四元组只有 %ux%u）",
-                   out_w_, out_h_, cap_.width() / 2, cap_.height() / 2);
+    const int max_w = static_cast<int>(cap_.width()) / (mono_ ? 1 : 2);
+    const int max_h = static_cast<int>(cap_.height()) / (mono_ ? 1 : 2);
+    if (out_w_ < 2 || out_h_ < 2 || out_w_ > max_w || out_h_ > max_h) {
+      RCLCPP_ERROR(get_logger(), "输出 %dx%d 越界（上限 %dx%d）",
+                   out_w_, out_h_, max_w, max_h);
       return false;
     }
 
-    // 行列索引表：输出 (x,y) → 源里那个 Bayer 四元组左上角的 (row, col)。
-    // 源四元组阵列 = (W/2)x(H/2)；非整数倍缩放用最近邻。
-    const int qw = static_cast<int>(cap_.width() / 2);
-    const int qh = static_cast<int>(cap_.height() / 2);
+    // 行列索引表：mono 按像素做最近邻；rgb 则输出 (x,y) → 源里那个 Bayer
+    // 四元组左上角的 (row, col)，源四元组阵列 = (W/2)x(H/2)。
+    const int qw = max_w;
+    const int qh = max_h;
+    const int step = mono_ ? 1 : 2;
     row_.resize(out_h_);
     col_.resize(out_w_);
     for (int y = 0; y < out_h_; ++y)
-      row_[y] = 2 * static_cast<int>(static_cast<int64_t>(y) * qh / out_h_);
+      row_[y] = step * static_cast<int>(static_cast<int64_t>(y) * qh / out_h_);
     for (int x = 0; x < out_w_; ++x)
-      col_[x] = 2 * static_cast<int>(static_cast<int64_t>(x) * qw / out_w_);
+      col_[x] = step * static_cast<int>(static_cast<int64_t>(x) * qw / out_w_);
 
     // 两条源行的暂存区（拷进 CPU 缓存用）
     stage_.resize(cap_.stride());   // 单位是 uint16 → 字节数 = stride*2 = 两行
@@ -234,16 +240,17 @@ public:
     } else {
       qos.reliable();
     }
-    pub_img_ = create_publisher<sensor_msgs::msg::Image>(ns + "/ai_camera/image_raw", qos);
-    pub_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(ns + "/ai_camera/camera_info", qos);
+    const std::string prefix = ns + EnvStr("AI_CAM_TOPIC_PREFIX", "/ai_camera");
+    pub_img_ = create_publisher<sensor_msgs::msg::Image>(prefix + "/image_raw", qos);
+    pub_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(prefix + "/camera_info", qos);
 
     msg_.header.frame_id = frame_id_;
     msg_.height = static_cast<uint32_t>(out_h_);
     msg_.width = static_cast<uint32_t>(out_w_);
-    msg_.encoding = "rgb8";
+    msg_.encoding = mono_ ? "mono8" : "rgb8";
     msg_.is_bigendian = 0;
-    msg_.step = static_cast<uint32_t>(out_w_ * 3);
-    msg_.data.resize(static_cast<size_t>(out_w_) * out_h_ * 3);
+    msg_.step = static_cast<uint32_t>(out_w_ * (mono_ ? 1 : 3));
+    msg_.data.resize(static_cast<size_t>(out_w_) * out_h_ * (mono_ ? 1 : 3));
 
     BuildCameraInfo();
 
@@ -253,10 +260,11 @@ public:
     period_ = 0.8 / fps_;
 
     RCLCPP_INFO(get_logger(),
-                "源 %s %ux%u stride=%u → 输出 %dx%d rgb8 @ %.1f fps (%.2f MB/帧), "
+                "源 %s %ux%u stride=%u → 输出 %dx%d %s @ %.1f fps (%.2f MB/帧), "
                 "autolevel=%d gain=%.2f",
                 dev_.c_str(), cap_.width(), cap_.height(), cap_.stride(),
-                out_w_, out_h_, fps_, msg_.data.size() / 1e6,
+                out_w_, out_h_, mono_ ? "mono8" : "rgb8", fps_,
+                msg_.data.size() / 1e6,
                 static_cast<int>(autolevel_), gain_);
     return true;
   }
@@ -337,7 +345,7 @@ private:
                     cap_.stride());
         const uint16_t *r0 = stage_.data();
         for (int x = 0; x < out_w_; x += 8) {
-          int v = static_cast<int>(r0[col_[x] + 1]) - kBlackLevel;   // 用 Gr 通道
+          int v = static_cast<int>(r0[col_[x] + (mono_ ? 0 : 1)]) - kBlackLevel;
           if (v < 0) v = 0;
           hist[v >> 6]++;                 // 桶宽 64 → 覆盖 0..65535
           ++total;
@@ -373,9 +381,17 @@ private:
     for (int y = 0; y < out_h_; ++y) {
       const uint8_t *src = reinterpret_cast<const uint8_t *>(base) +
                            static_cast<size_t>(row_[y]) * row_bytes;
-      std::memcpy(stage_.data(), src, row_bytes * 2);
+      // mono 只用一条源行; rgb 用两条(Bayer 上下行)。mono 拷两行会在最后一行越界。
+      std::memcpy(stage_.data(), src, row_bytes * (mono_ ? 1 : 2));
       const uint16_t *r0 = stage_.data();
       const uint16_t *r1 = r0 + stride16;
+      if (mono_) {
+        // 单色传感器: 逐像素 LUT 直出灰度(Bayer 标签是形式上的)
+        uint8_t *o = dst + static_cast<size_t>(y) * out_w_;
+        for (int x = 0; x < out_w_; ++x)
+          *o++ = lut_[r0[col[x]]];
+        continue;
+      }
       uint8_t *o = dst + static_cast<size_t>(y) * out_w_ * 3;
       for (int x = 0; x < out_w_; ++x) {
         const int c = col[x];
@@ -394,9 +410,18 @@ private:
     // u0=646.499 v0=497.005, xi=0.176364, k1/k2/p1/p2 见文件。
     // ROS 的 CameraInfo 没有 MEI，这里放的是把出厂焦距/主点按分辨率线性缩放
     // 得到的 **针孔近似**，畸变留 0 —— 够 rviz/预览，**不够做精确几何**。
-    const double sx = out_w_ / 1280.0, sy = out_h_ / 960.0;
-    const double fx = 674.669 * sx, fy = 682.214 * sy;
-    const double cx = 646.499 * sx, cy = 497.005 * sy;
+    double fx, fy, cx, cy;
+    if (mono_) {
+      // 鱼眼 OV7251 没有出厂针孔标定(双目外参在 miloc 的私有格式里) ——
+      // 给几何合理的占位, 只够预览; 精确几何需另行标定。
+      fx = fy = out_w_ * 0.6;
+      cx = out_w_ / 2.0;
+      cy = out_h_ / 2.0;
+    } else {
+      const double sx = out_w_ / 1280.0, sy = out_h_ / 960.0;
+      fx = 674.669 * sx; fy = 682.214 * sy;
+      cx = 646.499 * sx; cy = 497.005 * sy;
+    }
     info_.header.frame_id = frame_id_;
     info_.height = static_cast<uint32_t>(out_h_);
     info_.width = static_cast<uint32_t>(out_w_);
@@ -439,6 +464,7 @@ private:
   int out_w_ = 1280, out_h_ = 960;
   double fps_ = 30.0, gain_ = 1.0, period_ = 0.0;
   bool autolevel_ = true;
+  bool mono_ = false;
   std::vector<int> row_, col_;
   std::vector<uint8_t> lut_;
   std::vector<uint16_t> stage_;   // 两条源行的暂存区
