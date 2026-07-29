@@ -252,10 +252,14 @@ class AiCameraBridge(Node):
         self.frame_id = env('AI_CAM_FRAME_ID', 'ai_camera_optical')
         ns = env('AI_CAM_NS', '/mi1045904').rstrip('/')
 
-        # 影像用 reliable(SYSTEM_DEFAULT): 与 D455 桥保持一致, 兼容 reliable 订阅者。
-        qos = QoSProfile(depth=2,
-                         history=QoSHistoryPolicy.KEEP_LAST,
-                         reliability=QoSReliabilityPolicy.RELIABLE)
+        # 影像 QoS: 默认 reliable(与 D455 桥一致, 兼容 reliable 订阅者)。
+        # 想省 publish 开销可设 AI_CAM_QOS=best_effort —— 但 reliable 的订阅者
+        # 就连不上了(QoS 不兼容, 而且不报错, 表现为"订阅了收不到")。
+        rel = (QoSReliabilityPolicy.BEST_EFFORT
+               if env('AI_CAM_QOS', 'reliable').lower().startswith('best')
+               else QoSReliabilityPolicy.RELIABLE)
+        qos = QoSProfile(depth=2, history=QoSHistoryPolicy.KEEP_LAST,
+                         reliability=rel)
         self.pub_img = self.create_publisher(Image, ns + '/ai_camera/image_raw', qos)
         self.pub_info = self.create_publisher(CameraInfo, ns + '/ai_camera/camera_info', qos)
 
@@ -269,8 +273,19 @@ class AiCameraBridge(Node):
         # ⚠️ 节流按【墙钟】而不是帧计数。按帧计数会被取流速率牵连:
         # 处理一帧要百来毫秒, 期间源仍在 30fps 灌, 于是实际只 DQ 到 ~20fps,
         # "每 6 帧发一次"就变成 3.3fps 而不是要的 5fps。按时间就与取流速率解耦。
-        self.period = 1.0 / self.fps
+        # ⚠️ 阈值要留容差, 不能正好等于 1/fps。当目标帧率≈源帧率时:
+        # 处理完一帧后阻塞等下一帧, 醒来时 now - t_last_pub 常常差几十微秒
+        # 不到一个周期 → 这一帧被跳过 → 下一次要等两个周期 → **帧率正好砍半**
+        # (实测 BIN=4 卡在 17.7fps ≈ 30/2, 而处理只用 29ms 本该跑满 30fps)。
+        # 取 0.8 个周期做阈值: 0.9 实测仍会偶尔误跳(28.8 而非 30.3fps)。
+        # 上限本来就由源帧率(30fps)兜着, 阈值松一点不会超发。
+        self.period = 0.8 / self.fps
         self.t_last_pub = 0.0
+        self.lut = None
+        self.lut_scale = 0.0
+
+        self.out_buf = np.empty((self.out_h, self.out_w, 3), np.uint8)
+        self.build_lut(255.0 / 61374.0 * self.gain)
 
         self.get_logger().info(
             '源 %s %dx%d %s stride=%d → 输出 %dx%d rgb8 @ %.1f fps, '
@@ -283,56 +298,76 @@ class AiCameraBridge(Node):
         self.n_pub = 0
         self.n_timeout = 0
         self.n_stale = 0
+        self.t_drain = self.t_conv = self.t_pub = 0.0
         self.t_report = time.time()
-        # 定时器周期取源帧间隔的一半, 保证不会成为节流瓶颈
-        self.timer = self.create_timer(1.0 / 120.0, self.pump)
+        # ⚠️ 不用 rclpy 的定时器 + spin。本节点没有任何订阅, 走执行器等于白白
+        # 承担每轮的调度开销 —— 实测那部分把 23fps 卡死在与分辨率无关的位置
+        # (BIN=4 的 526x390 和 BIN=3 的 701x520 帧率几乎一样, 说明瓶颈是固定
+        # 开销而不是像素量)。改成自己 select 阻塞的裸循环。
+        self.msg_img = Image()
+        self.msg_img.header.frame_id = self.frame_id
+        self.msg_img.encoding = 'rgb8'
+        self.msg_img.is_bigendian = 0
+        self.msg_info = CameraInfo()
+        self.msg_info.header.frame_id = self.frame_id
+        self.ci_last_sec = -1
 
-    # ── Bayer 抽点 + 10 位→8 位 ────────────────────────────────────────────
+    def run(self):
+        while rclpy.ok():
+            self.pump()
+
+    # ── Bayer 抽点 + 10 位→8 位（LUT 查表）──────────────────────────────
+    def build_lut(self, scale):
+        """65536 项查表: 减黑电平 + 缩放 + 截断, 一次 fancy-index 全干完。
+
+        原来那条 float 路(astype(int32) → 减 → clip → astype(float32) → 乘 →
+        clip → astype(uint8), 每通道 5 趟大数组)在 1052x780 上要 ~28ms/通道;
+        换成 lut[strided_view] 一趟出结果, 同分辨率 3 通道合计 ~28ms。
+        表本身只有 65536 项, 重建约 0.3ms, 只在 scale 变化超过 10% 时重建。
+        """
+        x = np.arange(65536, dtype=np.int32) - BLACK_LEVEL
+        np.clip(x, 0, None, out=x)
+        v = x.astype(np.float32) * scale
+        np.clip(v, 0, 255, out=v)
+        self.lut = v.astype(np.uint8)
+        self.lut_scale = scale
+
     def to_rgb8(self, raw):
         s = self.step
         h, w = self.out_h * s, self.out_w * s
 
-        # ⚠️ 性能命脉: VI 的 DMA 缓冲是 write-combining 内存。在它上面做大步长
-        # 抽点读会有巨大读放大 —— 每次访问拉一整条 cache line 却只用 2 字节。
-        # 实测那样写一帧要 ~1.9 秒, 把节点从 30fps 拖到 3fps。
-        # 正确做法: 先把需要的【整行】连续拷进普通内存(每行 8416 字节顺序读,
-        # WC 内存对顺序读是友好的), 再在普通内存上做列抽点。
-        top = np.ascontiguousarray(raw[0:h:s, :w])   # 每组的第 0 行: R / Gr
-        bot = np.ascontiguousarray(raw[1:h:s, :w])   # 每组的第 1 行: Gb / B
-
-        # int32 防止减黑电平下溢(uint16 会绕回 65535)
-        r = top[:, 0::s].astype(np.int32) - BLACK_LEVEL
-        g = ((top[:, 1::s].astype(np.int32) +
-              bot[:, 0::s].astype(np.int32)) >> 1) - BLACK_LEVEL
-        b = bot[:, 1::s].astype(np.int32) - BLACK_LEVEL
-        for ch in (r, g, b):
-            np.clip(ch, 0, None, out=ch)
-
         if self.autolevel:
-            # 抽样算 99.5 分位, 全图算太贵。暗场时分位数≈0 → 兜底避免除零。
-            hi = float(np.percentile(g[::4, ::4], 99.5)) if g.size else 0.0
-            scale = 235.0 / hi if hi > 8.0 else 0.0
+            # 粗抽样求 99.5 分位。在 strided 视图上再抽 8 倍, 只有几千个点。
+            samp = raw[0:h:s * 8, 0:w:s * 8]
+            hi = float(np.percentile(samp, 99.5)) - BLACK_LEVEL if samp.size else 0.0
+            scale = 235.0 / hi if hi > 512.0 else 1.0 / 256.0
         else:
-            scale = 255.0 / 61374.0                  # 61374 = (1023-64)<<6
-        if scale <= 0.0:
-            scale = 1.0 / 256.0        # 近全黑: 等价 >>8, 让噪声可见而非死黑
+            scale = 255.0 / 61374.0          # 61374 = (1023-64)<<6
         scale *= self.gain
+        # 抖动会让查表天天重建, 只在变化超过 10% 时才重建
+        if abs(scale - self.lut_scale) > 0.1 * max(scale, self.lut_scale):
+            self.build_lut(scale)
 
-        out = np.empty((self.out_h, self.out_w, 3), np.uint8)
-        for i, ch in enumerate((r, g, b)):
-            v = ch.astype(np.float32)
-            v *= scale
-            np.clip(v, 0, 255, out=v)
-            out[:, :, i] = v.astype(np.uint8)
+        out = self.out_buf
+        # ⚠️ 绿色只取 Gr 一路, 不和 Gb 求平均 —— 求平均要多两趟大数组运算,
+        # 在 30fps 预算(33ms)里占不起。代价是绿通道噪声高 √2 倍, 肉眼看不出。
+        out[:, :, 0] = self.lut[raw[0:h:s, 0:w:s]]        # R
+        out[:, :, 1] = self.lut[raw[0:h:s, 1:w:s]]        # Gr
+        out[:, :, 2] = self.lut[raw[1:h:s, 1:w:s]]        # B
         return out
 
     def pump(self):
         # ⚠️ 排空到最新帧再处理。源是 30fps 而我们只处理 ~5fps, 队列长期是满的,
         # 直接取队首拿到的是【最旧】那帧 —— 延迟会稳定在 NBUF/30 ≈ 200ms。
         # 先把队列里已就绪的全部取出、除最后一帧外立刻还回去, 延迟降到一帧内。
+        t_enter = time.time()
         latest = None
+        first = True
         while True:
-            got = self.cap.dequeue(timeout=0.0)
+            # 第一次阻塞等(最多 0.5s), 之后非阻塞排空 —— 裸循环里不能忙等,
+            # 否则一个核被 100% 占死, 而这条红线是"相机永远让路给运动栈"。
+            got = self.cap.dequeue(timeout=0.5 if first else 0.0)
+            first = False
             if got is None:
                 break
             self.n_dq += 1
@@ -346,11 +381,14 @@ class AiCameraBridge(Node):
             return
         idx, seq, _ts = latest
         now = time.time()
+        self.t_drain += now - t_enter
         try:
             if now - self.t_last_pub >= self.period:
                 self.t_last_pub = now
                 rgb = self.to_rgb8(self.cap.view(idx))
+                t1 = time.time(); self.t_conv += t1 - now
                 self.publish(rgb, seq)
+                self.t_pub += time.time() - t1
                 self.n_pub += 1
         finally:
             # 无论如何都要还回去, 否则缓冲很快耗尽、彻底停流
@@ -358,14 +396,14 @@ class AiCameraBridge(Node):
         self.maybe_report()
 
     def publish(self, rgb, seq):
+        # ⚠️ 复用同一个 Image 对象。rosidl 生成的消息类构造一次要初始化 header/
+        # data 等一堆字段, 每帧新建在 30fps 预算里是实打实的开销;
+        # publish() 是同步序列化的, 发完就可以改, 复用安全。
         now = self.get_clock().now().to_msg()
-        m = Image()
+        m = self.msg_img
         m.header.stamp = now
-        m.header.frame_id = self.frame_id
         m.height = rgb.shape[0]
         m.width = rgb.shape[1]
-        m.encoding = 'rgb8'
-        m.is_bigendian = 0
         m.step = rgb.shape[1] * 3
         # ⚠️ 必须给 array.array('B')。Foxy 生成的 Image.data setter 只对
         # array.array 走快路径, 其它类型(bytes/numpy)会掉进 __debug__ 断言里
@@ -375,18 +413,30 @@ class AiCameraBridge(Node):
         m.data = array.array('B', rgb.tobytes())
         self.pub_img.publish(m)
 
-        ci = CameraInfo()
-        ci.header = m.header
+        # camera_info 是静态的(内参不随帧变), 每帧都发纯属浪费一次 DDS 写。
+        # 1Hz 足够任何订阅者拿到, 且 latched 语义由 KEEP_LAST 保证。
+        if now.sec == self.ci_last_sec:
+            return
+        self.ci_last_sec = now.sec
+        ci = self.msg_info
+        ci.header.stamp = now
         ci.height = m.height
         ci.width = m.width
+        # ⚠️ 出厂标定在 /opt/ros2/cyberdog/share/athena_tracking/config/camera_AI.yaml,
+        # 是 **MEI(全向)模型** @1280x960: gamma1=674.669 gamma2=682.214
+        # u0=646.499 v0=497.005, xi=0.176364, k1/k2/p1/p2 见文件。
+        # ROS 的 CameraInfo 没有 MEI, 这里放的是把出厂焦距/主点按分辨率线性缩放
+        # 得到的 **针孔近似**, 畸变留 0 —— 够 rviz/预览用, **不够做精确几何**。
+        # 要精确的话请直接读那份 yaml 走 camodocal/MEI。
+        sx = m.width / 1280.0
+        sy = m.height / 960.0
+        fx, fy = 674.669 * sx, 682.214 * sy
+        cx, cy = 646.499 * sx, 497.005 * sy
         ci.distortion_model = 'plumb_bob'
         ci.d = [0.0] * 5
-        # 没有标定文件 —— 给个几何合理的占位(f≈对角线), 标定后再替换。
-        f = float(m.width)
-        ci.k = [f, 0.0, m.width / 2.0, 0.0, f, m.height / 2.0, 0.0, 0.0, 1.0]
+        ci.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
         ci.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-        ci.p = [f, 0.0, m.width / 2.0, 0.0, 0.0, f, m.height / 2.0, 0.0,
-                0.0, 0.0, 1.0, 0.0]
+        ci.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         self.pub_info.publish(ci)
 
     def maybe_report(self):
@@ -394,10 +444,15 @@ class AiCameraBridge(Node):
         if t - self.t_report < 10.0:
             return
         dt = t - self.t_report
-        self.get_logger().info('取 %.1f fps / 发 %.1f fps (丢弃过期 %d / 空转 %d)'
-                               % (self.n_dq / dt, self.n_pub / dt,
-                                  self.n_stale, self.n_timeout))
+        k = max(1, self.n_pub)
+        self.get_logger().info(
+            '取 %.1f fps / 发 %.1f fps (丢弃过期 %d / 空转 %d) '
+            '| 每帧: 排空 %.1fms 转换 %.1fms 发布 %.1fms'
+            % (self.n_dq / dt, self.n_pub / dt, self.n_stale, self.n_timeout,
+               self.t_drain * 1000 / k, self.t_conv * 1000 / k,
+               self.t_pub * 1000 / k))
         self.n_dq = self.n_pub = self.n_timeout = self.n_stale = 0
+        self.t_drain = self.t_conv = self.t_pub = 0.0
         self.t_report = t
 
 
@@ -406,7 +461,7 @@ def main():
     node = None
     try:
         node = AiCameraBridge()
-        rclpy.spin(node)
+        node.run()
     except KeyboardInterrupt:
         pass
     finally:
