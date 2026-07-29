@@ -2830,3 +2830,80 @@ typedef struct { std::string id; Rect rect; std::vector<float> feats; float scor
 裸引擎 16.0+3.16 = 19 ms，SDK 封装后 55.7 ms —— **多出的 ~37 ms 是 CPU 侧预处理**
 （resize/格式转换）。要提速就把预处理搬到 GPU，或直接绕开 SDK 自己调引擎。
 18 fps 对人体跟随已经够用。
+
+---
+
+## 🦿 运动控制：无电池窗口的侦察结果（2026-07-29）
+
+机主问「电池来之前能不能先把运动控制开发适配好」。侦察结论：**能做的比预想多得多，
+但有一条硬边界**。全程只读、零发包。
+
+### ① 运动板在没有电池的情况下仍全速播送遥测
+
+`192.168.55.233`（与 `.100` 同 MAC，都在 `l4tbr0` 网桥上），SSH:22 开。
+纯被动 LCM 组播监听（`tools/motion/lcm-decode.py`，**只 recvfrom 从不 sendto**）：
+
+| 频道 | 频率 | 载荷 |
+|---|---|---|
+| `myIMU` | **1011 Hz** | 80 B |
+| `leg_control_data` | 500.6 Hz | 392 B |
+| `leg_control_command` | 500.6 Hz | 488 B |
+| `spi_data` / `spi_command` | 500.4 Hz | 204 / 264 B |
+| `motion_control_cmd` | 500.6 Hz | 52 B |
+| `global_to_robot` | 500.6 Hz | 56 B |
+| `main_cheetah_visualization` | 59.8 Hz | 100 B |
+
+**控制器此刻正以 500Hz 跑着**，频道名是 MIT Cheetah 原班命名。
+
+### ② 协议 100% 可解码（字节数三重交叉验证）
+
+类型定义来自小米自己开源的 `cyberdog_ros2/cyberdog_interfaces/lcm_translate_msgs/lcm_type/*.lcm`。
+LCM 载荷 = 8 字节 fingerprint + 大端字段，逐个对上：
+
+| 频道 | 定义算出 | +fingerprint | 实测 |
+|---|---|---|---|
+| `myIMU` = `microstrain_lcmt` | 72 | 80 | **80** ✅ |
+| `leg_control_data` | 384 | 392 | **392** ✅ |
+| `spi_data` = `spi_data_t` | 196 | 204 | **204** ✅ |
+
+### ③ IMU 是完全可用的活数据
+
+```
+姿态 roll=+0.72° pitch=+0.96° yaw=-0.39°      ← 狗平放,对
+角速度 +0.001 +0.000 -0.000 rad/s              ← 静止,对
+加速度 -0.161 +0.125 +9.677 (合模 9.679)       ← 重力,对
+温度 50.2°C
+```
+⚠️ 但 **好包 6,084,576 / 坏包 4,325,340 = 41% 坏包率**，值得单独查。
+
+### ④ 🔴 硬边界：**没有电池就没有关节反馈**
+
+对 `leg_control_data` 做字段活性判定（`tools/motion/lcm-field-liveness.py`，
+2999 帧抽样）：
+
+| 字段 | 标准差 | 判定 |
+|---|---|---|
+| `q` / `qd` / `p` / `v` / `tau_est` / `force_est` / `force_desired` | — | ❌ **全部逐关节恒定** |
+| （对照）IMU `acc_z` | 0.005024 | ✅ 在变 |
+
+对照组证明采样方法有效 ⇒ 关节数据是真的冻着的。
+机理：无电池 → 电机驱动器无电 → 无编码器反馈 → 控制器填配置限值。
+
+**但这些"限值"本身是情报**：`tau_est` 恒为 ±24.0000（**24 Nm 正是 CyberDog 公布的
+关节最大力矩**）、`qd` 恒为 ±45.0000 rad/s、`q` 在 -13.26~+15.17 之间且左右对称。
+`force_desired` 全零。`spi_data.flags` 全 1、`spi_driver_status=1678114816`。
+
+### ⑤ 由此划出的能力边界
+
+| 现在就能做（无电池） | 必须等电池 |
+|---|---|
+| LCM 传输层与消息框架（已验证） | 关节位置/速度/力矩反馈 |
+| IMU 全链路（1kHz 活数据，可直接发 ROS2 `sensor_msgs/Imu`） | 任何闭环控制 |
+| ROS2↔LCM 桥的结构与 IMU 通路 | 里程计/状态估计 |
+| 运动板只读侦察、部署流程摸清 | 步态、站立、行走 |
+| **安全基础设施**（急停/看门狗/限位/dry-run） | 一切实际驱动电机的验证 |
+| `cyberdog_motor_sdk` / `cyberdog_locomotion` 交叉编译链 | 控制器上板 |
+
+🔴 **红线**：本阶段目标是「装好但不发射」。不发任何可能动电机的指令、不 kill 工厂
+控制器、机主不在场不留任何 armed 状态。**安全基础设施必须在电池到货前完成**——
+这是一台十几公斤、12 个力控关节（单关节 24 Nm）、**没有硬件急停**的机器。
