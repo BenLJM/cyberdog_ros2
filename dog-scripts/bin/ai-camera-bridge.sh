@@ -98,6 +98,26 @@ case "$NAME" in
     ;;
 esac
 
+# --- 产线个体标定 → 针孔近似 env ----------------------------------------------
+# /params/camera/*.yaml 是这台狗的产线 MEI 标定(2021-08-27, 检验 flag 全 1)。
+# MEI→针孔近似: f = gamma/(1+xi), 主点 = (u0, v0)。个体值与 share 里的通用参考
+# 差别很大(主摄 xi 连符号都不同), 必须用个体值。
+# 左右对应(DTB badge 铁证): 2-0061=ov7251_l_center → camera_left.yaml;
+#                           2-0062=ov7251_front    → camera_right.yaml。
+mei_env() {  # $1=yaml路径 $2=env前缀 → echo export 语句
+  [ -r "$1" ] || return 0
+  awk -v P="$2" '
+    /xi:/     {xi=$2} /gamma1:/ {g1=$2} /gamma2:/ {g2=$2}
+    /u0:/     {u0=$2} /v0:/     {v0=$2}
+    END { if (g1+0 > 0 && g2+0 > 0)
+            printf "export %s_FX=%.3f %s_FY=%.3f %s_CX=%.3f %s_CY=%.3f\n",
+                   P, g1/(1+xi), P, g2/(1+xi), P, u0, P, v0 }' "$1"
+}
+eval "$(mei_env /params/camera/camera_AI.yaml   MAIN)"
+eval "$(mei_env /params/camera/camera_left.yaml  FE1C)"
+eval "$(mei_env /params/camera/camera_right.yaml FE2C)"
+log "标定: 主摄 fx=${MAIN_FX:-无} 左鱼眼 fx=${FE1C_FX:-无} 右鱼眼 fx=${FE2C_FX:-无}"
+
 # --- 枚举鱼眼(ov7251 ×2, 变体 AE 起内核支持三路并发) --------------------------
 FE1=""; FE2=""
 for v in /dev/video*; do
@@ -140,4 +160,7 @@ exec /usr/sbin/chroot "$CHROOT" /bin/bash -c \
   "AI_CAM_DEV='$DEV' AI_CAM_IMPL='$IMPL' AI_CAM_W='$W' AI_CAM_H='$H' \
    AI_CAM_BIN='$BIN' AI_CAM_FPS='$FPS' AI_CAM_NS='$NS' \
    AI_CAM_DEV_FE1='$FE1' AI_CAM_DEV_FE2='$FE2' \
+   AI_CAM_FX='${MAIN_FX:-}' AI_CAM_FY='${MAIN_FY:-}' AI_CAM_CX='${MAIN_CX:-}' AI_CAM_CY='${MAIN_CY:-}' \
+   FE1_FX='${FE1C_FX:-}' FE1_FY='${FE1C_FY:-}' FE1_CX='${FE1C_CX:-}' FE1_CY='${FE1C_CY:-}' \
+   FE2_FX='${FE2C_FX:-}' FE2_FY='${FE2C_FY:-}' FE2_CX='${FE2C_CX:-}' FE2_CY='${FE2C_CY:-}' \
    AI_CAM_GAIN='$GAIN' AI_CAM_AUTOLEVEL='$AUTOLEVEL' $INNER"

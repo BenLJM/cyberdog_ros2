@@ -410,14 +410,24 @@ private:
     // u0=646.499 v0=497.005, xi=0.176364, k1/k2/p1/p2 见文件。
     // ROS 的 CameraInfo 没有 MEI，这里放的是把出厂焦距/主点按分辨率线性缩放
     // 得到的 **针孔近似**，畸变留 0 —— 够 rviz/预览，**不够做精确几何**。
-    double fx, fy, cx, cy;
-    if (mono_) {
-      // 鱼眼 OV7251 没有出厂针孔标定(双目外参在 miloc 的私有格式里) ——
-      // 给几何合理的占位, 只够预览; 精确几何需另行标定。
+    // ⚠️ 首选【这台狗的产线个体标定】：/params/camera/*.yaml(2021-08-27 产线
+    // MEI 标定, 检验 flag 全 1), 由宿主启动器解析并按 f=gamma/(1+xi) 换算成
+    // 针孔近似后经 AI_CAM_FX/FY/CX/CY 传入(标定分辨率坐标系, 这里按输出缩放)。
+    // 个体值与 share 里那份通用参考差别很大(主摄 xi 连符号都不同), 别用通用值。
+    double fx = EnvDbl("AI_CAM_FX", 0.0), fy = EnvDbl("AI_CAM_FY", 0.0);
+    double cx = EnvDbl("AI_CAM_CX", 0.0), cy = EnvDbl("AI_CAM_CY", 0.0);
+    const double calw = EnvDbl("AI_CAM_CAL_W", mono_ ? 640.0 : 1280.0);
+    const double calh = EnvDbl("AI_CAM_CAL_H", mono_ ? 480.0 : 960.0);
+    if (fx > 0.0 && fy > 0.0) {
+      const double sx = out_w_ / calw, sy = out_h_ / calh;
+      fx *= sx; fy *= sy; cx *= sx; cy *= sy;
+    } else if (mono_) {
+      // 兜底占位(没拿到个体标定时): 只够预览
       fx = fy = out_w_ * 0.6;
       cx = out_w_ / 2.0;
       cy = out_h_ / 2.0;
     } else {
+      // 兜底: share 里的通用参考值(样机标定), 按分辨率缩放
       const double sx = out_w_ / 1280.0, sy = out_h_ / 960.0;
       fx = 674.669 * sx; fy = 682.214 * sy;
       cx = 646.499 * sx; cy = 497.005 * sy;

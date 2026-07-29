@@ -2723,3 +2723,42 @@ AE 验收矩阵：三路并发 15s×3 轮（轮间全关重开）全部 29fps；
   写满后 v4l2-ctl 停止收帧、零内核错误。测帧率一律 `--stream-to=/dev/null`。
 - 计帧管道 `tr -d "<" | wc -c` 数的是**剩下**的字节 —— 正确姿势
   `--verbose 2>&1 | grep -c dqbuf`。
+
+---
+
+## 📐 产线个体标定接入 + 出厂视觉栈调查结论（2026-07-29）
+
+### `/params/camera/` 是这台狗的产线个体标定（金矿）
+
+2021-08-27 产线 MEI 标定，检验 flag 全 1，含标定原始棋盘图。**个体值与
+`share/athena_tracking/config/camera_AI.yaml` 那份通用参考差别很大（主摄 xi
+连符号都不同：个体 -0.1476 vs 通用 +0.176）—— 之前硬编码的通用值已全部替换。**
+
+| 文件 | 内容 |
+|---|---|
+| `camera_AI.yaml` | 主摄 MEI @1280×960：gamma 491.0/497.9，u0/v0 651.7/482.9，xi=-0.1476 |
+| `camera_left.yaml` | 左鱼眼 MEI @640×480：gamma 438.8/439.3，xi=0.5873 |
+| `camera_right.yaml` | 右鱼眼 MEI @640×480：gamma 777.2/777.5，xi=1.8176 |
+| `extrinsics_stereo.yaml` | **双鱼眼基线 t_x=-79.9mm**（将来双目 VIO 的家底）|
+| `extrinsics_LeftAI.yaml` / `extrinsics_ColorAI.yaml` | 左鱼眼↔主摄 / Color↔主摄 外参 |
+
+**左右对应（DTB badge 铁证）**：2-0061 = `ov7251_l_center` = **left**；
+2-0062 = `ov7251_front` = **right**。话题已改名 `fisheye_left`/`fisheye_right`。
+
+**接入方式**：`ai-camera-bridge.sh` 宿主侧 awk 解析 yaml，按 MEI→针孔近似
+`f = gamma/(1+xi)` 换算后经 env 传入节点。交叉验证：两颗鱼眼 MEI 参数差异
+巨大但换算后有效焦距几乎相同（**276.5 vs 275.8**）—— 同款镜头，公式正确。
+实测三路 `camera_info`：主摄 fx=576.1 fy=584.1 cx=651.7 cy=482.9 ✓。
+（畸变仍为 0：MEI 的 k1/k2 不能塞进 plumb_bob 语义；精确几何请直接读 yaml 走 camodocal。）
+
+### 出厂视觉栈怎么消费 AI 相机（调查结论）
+
+`strings` 剖析 `athena_tracking/tracking`：它订阅的是 **D455 的
+`camera/depth/image_rect_raw` + `camera_info`**（我们的 d455-camera 服务已在发），
+自己读 `/params/camera` 和 `camera_AI.yaml`，**没有任何 AI 相机图像的 ROS 订阅**
+—— RGB 图像和 body/face 检测（`vision_ai_sdk`）都在 `camera_server` 进程内
+走 argus 私有通路，tracking 只吃"bbox + depth → pose"。
+
+⇒ **出厂 AI 跟踪要活起来，缺的不是图像话题，是 bbox 生产者**（出厂由
+camera_server 内嵌的 vision_ai_sdk 做，绑死 argus）。可行路线（未做，属新工程）：
+自建检测节点订阅 `/mi1045904/ai_camera/image_raw` 跑人体检测发 bbox 喂 tracking。

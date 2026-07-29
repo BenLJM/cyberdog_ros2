@@ -65,15 +65,25 @@ if [ "$IMPL" = "cpp" ]; then
   # ── 三镜头编排(2026-07-29 变体 AE 起) ────────────────────────────────────
   # 内核已修好端口幂等(r32-once + r32-perport), 三路可并发满速。
   # 鱼眼设备路径由宿主启动器解析后经 AI_CAM_DEV_FE1/FE2 传入; 缺省不起鱼眼。
+  # 话题按物理位置命名(DTB badge 铁证: 2-0061=ov7251_l_center=left,
+  # 2-0062=ov7251_front=right); 内参用各自产线个体标定(FE1_/FE2_ 环境传入)。
   # 三个进程一损俱损: 任何一个退出就整组退出(KillMode=control-group 收尸),
   # 交给 systemd 重启 —— 桥的 rebind 会让内核状态干净重来。
   PIDS=""
   if [ -n "${AI_CAM_DEV_FE1:-}" ]; then
-    AI_CAM_DEV="$AI_CAM_DEV_FE1" AI_CAM_ENCODING=mono8 AI_CAM_W=640 AI_CAM_H=480       AI_CAM_NODE_NAME=ai_camera_fisheye_a AI_CAM_TOPIC_PREFIX=/ai_camera/fisheye_a       AI_CAM_FRAME_ID=ai_camera_fisheye_a "$CPPBIN" &
+    AI_CAM_DEV="$AI_CAM_DEV_FE1" AI_CAM_ENCODING=mono8 AI_CAM_W=640 AI_CAM_H=480 \
+      AI_CAM_NODE_NAME=ai_camera_fisheye_left AI_CAM_TOPIC_PREFIX=/ai_camera/fisheye_left \
+      AI_CAM_FRAME_ID=ai_camera_fisheye_left \
+      AI_CAM_FX="${FE1_FX:-}" AI_CAM_FY="${FE1_FY:-}" AI_CAM_CX="${FE1_CX:-}" AI_CAM_CY="${FE1_CY:-}" \
+      "$CPPBIN" &
     PIDS="$PIDS $!"
   fi
   if [ -n "${AI_CAM_DEV_FE2:-}" ]; then
-    AI_CAM_DEV="$AI_CAM_DEV_FE2" AI_CAM_ENCODING=mono8 AI_CAM_W=640 AI_CAM_H=480       AI_CAM_NODE_NAME=ai_camera_fisheye_b AI_CAM_TOPIC_PREFIX=/ai_camera/fisheye_b       AI_CAM_FRAME_ID=ai_camera_fisheye_b "$CPPBIN" &
+    AI_CAM_DEV="$AI_CAM_DEV_FE2" AI_CAM_ENCODING=mono8 AI_CAM_W=640 AI_CAM_H=480 \
+      AI_CAM_NODE_NAME=ai_camera_fisheye_right AI_CAM_TOPIC_PREFIX=/ai_camera/fisheye_right \
+      AI_CAM_FRAME_ID=ai_camera_fisheye_right \
+      AI_CAM_FX="${FE2_FX:-}" AI_CAM_FY="${FE2_FY:-}" AI_CAM_CX="${FE2_CX:-}" AI_CAM_CY="${FE2_CY:-}" \
+      "$CPPBIN" &
     PIDS="$PIDS $!"
   fi
   if [ -z "$PIDS" ]; then
