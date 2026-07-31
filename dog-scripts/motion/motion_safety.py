@@ -273,9 +273,13 @@ class MotionSafetyGate:
     #   int8 pattern; double linear[3]; double angular[3]; double point[3];
     #   double quaternion[4]; double body_height; double gait_height; int8 order;
     # = 1+24+24+24+32+8+8+1 = 122 字节，+8 字节 fingerprint = 130
-    # ⚠️ fingerprint 目前用占位 0 —— **真正 arm 之前必须先从出厂流量里抓到真值**，
-    #    否则运动板会丢弃。本闸门在 dry-run 下不受影响（本来就不发）。
-    LCM_FINGERPRINT = b"\x00" * 8
+    # fingerprint（2026-07-31 实测确定，双向印证）：
+    #   · 从出厂 exec_request 活流量抓到 0x9724331e99b7d072（181 个样本完全一致）
+    #   · 出厂头文件 motion_control_request_lcmt.hpp 里的 base hash 是
+    #     0x4b92198f4cdbe839，而 LCM 的 _computeHash 规则是「左移 1 位」：
+    #       0x4b92198f4cdbe839 << 1 == 0x9724331e99b7d072  ✅ 逐位吻合
+    #   两条独立来源互证，可以放心使用。
+    LCM_FINGERPRINT = bytes.fromhex("9724331e99b7d072")
 
     def encode(self, cmd):
         """编成 motion_control_request_lcmt 的 LCM 载荷（大端）。"""

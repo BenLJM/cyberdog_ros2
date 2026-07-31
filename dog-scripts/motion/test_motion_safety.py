@@ -140,6 +140,22 @@ def t_encode():
     g.close()
 
 
+def t_fingerprint():
+    print("\n── ⑩ LCM fingerprint 必须是实测真值 ──")
+    g = ms.MotionSafetyGate(logger=quiet)
+    fp = g.LCM_FINGERPRINT
+    check("不是占位全零", fp != b"\x00" * 8)
+    check("等于活流量抓到的 0x9724331e99b7d072",
+          fp.hex() == "9724331e99b7d072", "实为 %s" % fp.hex())
+    # 与出厂头文件 base hash 的推导关系(LCM _computeHash = 左移 1 位)
+    base = 0x4b92198f4cdbe839
+    derived = ((base << 1) & 0xFFFFFFFFFFFFFFFF) | ((base >> 63) & 1)
+    check("与出厂头文件 base hash 左移 1 位一致",
+          derived == int.from_bytes(fp, "big"),
+          "推导得 0x%016x" % derived)
+    g.close()
+
+
 def t_constants():
     print("\n── ⑨ 常量必须与实测一致 ──")
     check("指令口 = 7671", ms.PORT_SEND_TO_MOTION == 7671)
@@ -152,7 +168,7 @@ def t_constants():
 def main():
     print("═══ 运动安全闸门测试套件（无需狗/网络/电池）═══")
     for fn in (t_default_is_safe, t_arm_requires_all_three, t_estop_latches,
-               t_estop_file, t_watchdog, t_clamp, t_validate, t_encode, t_constants):
+               t_estop_file, t_watchdog, t_clamp, t_validate, t_encode, t_constants, t_fingerprint):
         try:
             fn()
         except Exception as e:                       # noqa: BLE001
