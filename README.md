@@ -24,7 +24,9 @@ Not working:
 
 ## My unit
 <img width="572" height="589" alt="image" src="https://github.com/user-attachments/assets/2af73eb9-33b9-4d8c-aa07-6ee88b57751b" />
-![Uploading image.png…]()
+
+<img width="757" height="560" alt="image" src="https://github.com/user-attachments/assets/748ff85e-8c01-43d3-9f37-73fd5f3c63d1" />
+
 
 Mine has a myCobot arm and a LiDAR on it. During COVID I used it to
 fetch deliveries from the door.
